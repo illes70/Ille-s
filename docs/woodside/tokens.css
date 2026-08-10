@@ -1,0 +1,63 @@
+/*
+  Prism × Woodside Solutions — design tokens
+  Source of truth: the 7 approved redesign mockups (sent separately as images).
+  Full rationale + component rules: docs/woodside/IMPLEMENTATION.md
+  Broader brand-system reference (for anything not covered by the 7 screens): docs/woodside/DESIGN.md
+
+  Fonts — install first:
+    npm install @fontsource/newsreader @fontsource/public-sans
+
+  Then import only the weights actually used, once, in the app's entry point:
+    import "@fontsource/newsreader/400.css";
+    import "@fontsource/newsreader/500.css";
+    import "@fontsource/newsreader/400-italic.css";
+    import "@fontsource/public-sans/400.css";
+    import "@fontsource/public-sans/500.css";
+    import "@fontsource/public-sans/600.css";
+    import "@fontsource/public-sans/700.css";
+*/
+
+:root {
+  /* ---- type ---- */
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  --font-sans: "Public Sans", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+
+  /* ---- color: light surface (default app canvas) ---- */
+  --ink: #101b2b;         /* headings, primary body text on cream */
+  --ink-soft: #5c6570;    /* secondary body text, descriptions */
+  --ink-faint: #8b9086;   /* captions, status labels, placeholders */
+  --cream: #f7f4ec;       /* page background */
+  --raised: #fbf9f4;      /* cards, inputs sitting on cream */
+  --sunken: #efe9db;      /* AI chat bubble fill, subtle alternate bands */
+  --hairline: #dfd8c6;    /* 1px borders on cream */
+
+  /* ---- color: dark surface (sidebar always; main canvas in dark-mode) ---- */
+  --navy: #101b2b;             /* dark canvas */
+  --navy-raised: #172542;      /* cards on navy */
+  --navy-sidebar: #0c1420;     /* sidebar background specifically (one step darker) */
+  --navy-hairline: #2b3a56;    /* 1px borders on navy */
+  --inverse-ink: #fbf9f4;      /* headings/body on navy */
+  --inverse-ink-soft: #a6adc2; /* secondary text on navy */
+  --inverse-ink-faint: #6f7996;/* captions on navy */
+
+  /* ---- accent — see IMPLEMENTATION.md §3 for exactly where this is allowed ---- */
+  --rust: #a1552e;
+
+  /* ---- semantic action (not the brand accent — reserved for affirmative actions) ---- */
+  --good: #35573f;
+  --good-hover: #294331;
+
+  /* ---- radius — nothing in this system is fully rounded ---- */
+  --radius-card: 2px;
+  --radius-button: 5px;
+  --radius-chip: 6px;
+
+  /* ---- spacing (4px base) ---- */
+  --sp-xxs: 4px;
+  --sp-xs: 8px;
+  --sp-sm: 12px;
+  --sp-md: 16px;
+  --sp-lg: 24px;
+  --sp-xl: 32px;
+  --sp-xxl: 48px;
+}
