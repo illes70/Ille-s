@@ -1,5 +1,5 @@
 import "server-only";
-import type { Ad, AdStatus } from "../types";
+import type { Ad, AdAccount, AdStatus } from "../types";
 import { newId, readStore, updateStore } from "../store";
 import type { AdsProvider, LeadFormInput, NewAdInput } from "./provider";
 
@@ -13,9 +13,17 @@ const PALETTES: [string, string][] = [
 
 export class DemoProvider implements AdsProvider {
   readonly mode = "demo" as const;
+  constructor(
+    readonly account: AdAccount,
+    private accounts: AdAccount[],
+  ) {}
+
+  async listAccounts() {
+    return this.accounts;
+  }
 
   async listAds() {
-    return (await readStore()).ads;
+    return (await readStore()).ads.filter((a) => a.accountId === this.account.id);
   }
 
   async setAdStatus(adId: string, status: AdStatus) {
@@ -41,8 +49,10 @@ export class DemoProvider implements AdsProvider {
       const source = input.reuseImageFromAdId
         ? d.ads.find((a) => a.id === input.reuseImageFromAdId)
         : undefined;
+      const recipe = input.recipeId ? d.recipes.find((r) => r.id === input.recipeId) : undefined;
       const ad: Ad = {
         id: newId("ad"),
+        accountId: sibling.accountId,
         name: input.name,
         status: input.activate ? "ACTIVE" : "PAUSED",
         campaignId: sibling.campaignId,
@@ -50,16 +60,17 @@ export class DemoProvider implements AdsProvider {
         adsetId: sibling.adsetId,
         adsetName: sibling.adsetName,
         adsetDailyBudget: sibling.adsetDailyBudget,
+        adsetLearning: sibling.adsetLearning,
         creative: {
           headline: input.headline,
           primaryText: input.primaryText,
           cta: input.cta,
           imageUrl: input.imageUrl ?? source?.creative.imageUrl,
-          palette:
-            source?.creative.palette ?? PALETTES[d.ads.length % PALETTES.length],
+          palette: recipe?.palette ?? source?.creative.palette ?? PALETTES[d.ads.length % PALETTES.length],
+          recipeId: input.recipeId,
         },
         metrics: { spend: 0, impressions: 0, reach: 0, frequency: 0, clicks: 0, ctr: 0, cpm: 0, leads: 0, cpl: null },
-        spendTrend: [0, 0, 0, 0, 0, 0, 0],
+        daily: [],
         createdAt: new Date().toISOString(),
       };
       d.ads.unshift(ad);
@@ -72,6 +83,6 @@ export class DemoProvider implements AdsProvider {
   }
 
   async listLeads() {
-    return (await readStore()).leads;
+    return (await readStore()).leads.filter((l) => l.accountId === this.account.id);
   }
 }

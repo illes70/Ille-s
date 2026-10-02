@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Inbox, LayoutGrid, MessageSquare, Settings, Users } from "lucide-react";
+import { Activity, BookOpen, Inbox, LayoutGrid, MessageSquare, Settings, Users } from "lucide-react";
+import { AccountSwitcher } from "./AccountSwitcher";
 import { usePoll } from "./usePoll";
 import type { Proposal } from "@/lib/types";
 
@@ -11,6 +12,7 @@ const NAV = [
   { href: "/inbox", label: "Javaslatok", icon: Inbox, badge: true },
   { href: "/ads", label: "Hirdetések", icon: LayoutGrid },
   { href: "/leads", label: "Leadek", icon: Users },
+  { href: "/recipes", label: "Receptek", icon: BookOpen },
   { href: "/activity", label: "Robot élőben", icon: Activity },
   { href: "/settings", label: "Beállítások", icon: Settings },
 ];
@@ -22,12 +24,13 @@ export function Sidebar() {
 
   return (
     <aside className="sticky top-0 z-20 flex shrink-0 items-center gap-1 border-b border-line bg-surface px-3 py-2 md:h-dvh md:w-60 md:flex-col md:items-stretch md:border-r md:border-b-0 md:px-3 md:py-5">
-      <Link href="/" className="mr-2 flex items-center gap-2 px-2 md:mb-6 md:mr-0">
+      <Link href="/" className="mr-2 flex items-center gap-2 px-2 md:mb-4 md:mr-0">
         <span className="grid size-8 place-items-center rounded-lg bg-fg text-[13px] font-bold tracking-tight text-bg">
           O
         </span>
         <span className="hidden text-[15px] font-semibold tracking-tight md:inline">OCP</span>
       </Link>
+      <AccountSwitcher />
       <nav className="flex flex-1 gap-1 overflow-x-auto md:flex-col md:overflow-visible">
         {NAV.map(({ href, label, icon: Icon, badge }) => {
           const active = href === "/" ? path === "/" : path.startsWith(href);
@@ -56,7 +59,7 @@ export function Sidebar() {
 }
 
 function ConnectionPill() {
-  const data = usePoll<{ mode: "demo" | "meta" }>("/api/ads", 60_000);
+  const data = usePoll<{ mode: "demo" | "meta" }>("/api/accounts", 60_000);
   if (!data) return null;
   return (
     <Link

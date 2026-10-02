@@ -41,6 +41,16 @@ export function Chat() {
       .catch(() => undefined);
   }, []);
 
+  // ?q=… prefills the input (used by "Kérdezd az asszisztenst" buttons)
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) {
+      setInput(q);
+      window.history.replaceState(null, "", "/");
+      taRef.current?.focus();
+    }
+  }, []);
+
   useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [msgs]);
 
   function patchLast(fn: (m: Msg) => Msg) {

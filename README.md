@@ -8,19 +8,22 @@ AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli hel
 |---|---|
 | **Asszisztens** (`/`) | Chat: hirdetések elemzése, leállítás/indítás, büdzsé, új hirdetések tömeges feltöltése szövegírással, instant form, leadek, webes kutatás (trendek, bevált keretrendszerek). Mellette a döntésre váró javaslatok és a robot élő naplója. |
 | **Javaslatok** (`/inbox`) | Amit az asszisztens magától csinálna. „Mehet” → végrehajtja. |
-| **Hirdetések** (`/ads`) | Minden hirdetés képpel: költés, lead, CPL, frequency, CTR, CPM, 7 napos trend, állapotcímke (Nyerő / Kifáradt / Költ, nem hoz / Drága). |
-| **Leadek** (`/leads`) | Instant form leadek egyszerűsítve (név, telefon, email, város, megjegyzés). |
+| **Hirdetések** (`/ads`) | Kampány / hirdetéscsoport szűrő, időszak (ma, 7, 30, 90 nap), KPI-k, grafikon (napi/heti/havi bontás), lead-tölcsér, kreatívok képpel csoportonként (tanulási fázis, napi keret) vagy egy listában. Kattintásra részletnézet napi grafikonnal, leállítás/indítás. 15 másodpercenként frissül. |
+| **Leadek** (`/leads`) | Instant form leadek egyszerűsítve, státusszal (Új → Felhívva → Felmérés → Megnyert / Elveszett). A Meta webhookkal az új lead másodperceken belül megjelenik. |
+| **Receptek** (`/recipes`) | Bevált kreatívformák: mi nem változhat, mi kötelező, mi szabad, plusz szövegsablon és eredmény. Az asszisztens ezekből gyárt új hirdetést. |
 | **Robot élőben** (`/activity`) | Valós idejű napló mindarról, amit a robot néz és csinál. |
-| **Beállítások** (`/settings`) | Cél CPL, márkahang, robotpilóta korlátok, fiókok. |
+| **Beállítások** (`/settings`) | Cél CPL, márkahang, engedélyszint (Mindig kérdez / Kereten belül automata / Teljes automata), korlátok, fiókok. |
+
+Bal felül a **fiókváltó**: az összes hirdetési fiók, amihez a token hozzáfér, egy kattintással váltható.
 
 ### Figyelő szabályok (robotpilóta)
 - **Költ, nem hoz:** a cél CPL × N költés 0 leaddel → leállítás. Ezt engedélyezve kérdezés nélkül is megteszi.
 - **Drága lead:** CPL > cél × 1,6 → leállítási javaslat.
 - **Kifáradt kreatív:** frequency ≥ limit → kreatív frissítési javaslat.
-- **Nyerő:** CPL ≤ cél × 0,75, legalább 10 lead → +20% büdzsé javaslat (a beállított maximumig).
+- **Nyerő:** CPL ≤ cél × 0,75, legalább 10 lead → +20% büdzsé javaslat (a beállított maximumig). Tanulási fázisban lévő csoportot nem emel, mert az újraindítaná a tanulást.
 - **Gyenge horog:** CTR < 0,8% → új headline/első mondat teszt.
 
-A robot magától csak javasol. A chatben kifejezetten kért dolgokat végrehajtja. Az új hirdetések alapból **szüneteltetve** jönnek létre, a büdzsét pedig csak a beállított maximumig emeli, kivéve ha te mondasz konkrét összeget.
+Hogy mit hajt végre magától, az az engedélyszinttől függ: *Mindig kérdez* esetén semmit, *Kereten belül automata* esetén a lead nélkül költő hirdetések leállítását és a nyerők korlátozott emelését, *Teljes automata* esetén mindent. A chatben kifejezetten kért dolgokat végrehajtja. Az új hirdetések alapból **szüneteltetve** jönnek létre, a büdzsét pedig csak a beállított maximumig emeli, kivéve ha te mondasz konkrét összeget.
 
 ## Indítás
 
@@ -35,6 +38,8 @@ Ha a `META_*` változók üresek, az OCP **demó fiókkal** fut, így minden kip
 - `META_ACCESS_TOKEN`: System User token `ads_management`, `ads_read`, `pages_manage_ads`, `leads_retrieval` jogokkal
 - `META_AD_ACCOUNT_ID`: `act_…`
 - `META_PAGE_ID`: a Facebook oldal (új hirdetésekhez és instant formokhoz)
+
+Azonnali leadekhez kösd be a Meta webhookot: Meta app → Webhooks → Page → `leadgen`, callback: `<OCP URL>/api/webhooks/meta`, verify token: `META_VERIFY_TOKEN` (az aláírást a `META_APP_SECRET`-tel ellenőrzi).
 
 Napi/óránkénti automatikus figyeléshez egy ütemező (pl. Vercel Cron) hívja: `GET /api/cron/scan`, `Authorization: Bearer $CRON_SECRET` fejléccel.
 

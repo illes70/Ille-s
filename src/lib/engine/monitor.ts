@@ -1,6 +1,6 @@
 import "server-only";
 import type { Ad, Proposal, ProposalAction, Settings } from "../types";
-import { getProvider } from "../meta/provider";
+import { getProvider, listAccounts } from "../meta/provider";
 import { logActivity, newId, readStore, updateStore } from "../store";
 import { fmtMoney } from "../format";
 
@@ -57,8 +57,8 @@ export function analyze(ads: Ad[], s: Settings): Draft[] {
       });
     }
 
-    // 4) Winners: cheap leads with enough volume → scale
-    if (m.cpl !== null && m.cpl <= s.targetCpl * 0.75 && m.leads >= 10 && m.frequency < s.autopilot.frequencyLimit - 0.5) {
+    // 4) Winners: cheap leads with enough volume → scale (never during learning: a budget change resets it)
+    if (m.cpl !== null && m.cpl <= s.targetCpl * 0.75 && m.leads >= 10 && m.frequency < s.autopilot.frequencyLimit - 0.5 && ad.adsetLearning !== "LEARNING") {
       const pct = Math.min(20, s.autopilot.maxBudgetIncreasePct);
       const newBudget = Math.round((ad.adsetDailyBudget * (1 + pct / 100)) / 100) * 100;
       out.push({
@@ -87,11 +87,12 @@ export function analyze(ads: Ad[], s: Settings): Draft[] {
       });
     }
   }
-  return out;
+  // one proposal per key (e.g. two winning ads in the same ad set → one budget raise)
+  return [...new Map(out.map((d) => [d.key, d])).values()];
 }
 
-export async function executeAction(action: ProposalAction): Promise<string> {
-  const provider = await getProvider();
+export async function executeAction(action: ProposalAction, accountId?: string): Promise<string> {
+  const provider = await getProvider(accountId);
   if (action.type === "set_status" && action.adId && action.status) {
     await provider.setAdStatus(action.adId, action.status);
     return action.status === "PAUSED" ? "Hirdetés leállítva." : "Hirdetés elindítva.";
@@ -103,40 +104,66 @@ export async function executeAction(action: ProposalAction): Promise<string> {
   return "Nincs automatikus lépés – a kreatív frissítést a chatben indítsd.";
 }
 
+/** Which fresh proposals the autopilot may execute without asking. */
+function autoAllowed(p: Proposal, s: Settings): boolean {
+  if (p.action.type === "none") return false;
+  switch (s.autopilot.level) {
+    case "ask":
+      return false;
+    case "bounded":
+      return (p.kind === "pause_ad" && p.severity === "high") || p.kind === "scale_budget";
+    case "full":
+      return true;
+  }
+}
+
 /**
- * One monitoring pass: read ads, raise new proposals, and auto-execute the ones
- * the autopilot is allowed to do on its own (currently: pausing zero-result spenders).
+ * One monitoring pass over every ad account: read ads, raise new proposals,
+ * and auto-execute what the autopilot level allows.
  */
 export async function runScan(trigger: "cron" | "manual" | "agent") {
-  const provider = await getProvider();
-  const [ads, store] = await Promise.all([provider.listAds(), readStore()]);
-  const drafts = analyze(ads, store.settings);
+  const [accounts, store] = await Promise.all([listAccounts(), readStore()]);
+  let scanned = 0;
+  let createdCount = 0;
+  let autoCount = 0;
 
-  const created = await updateStore((d) => {
-    const openKeys = new Set(
-      d.proposals.filter((p) => p.status === "pending").map((p) => p.key),
-    );
-    const fresh: Proposal[] = drafts
-      .filter((x) => !openKeys.has(x.key))
-      .map((x) => ({ ...x, id: newId("prp"), status: "pending", createdAt: new Date().toISOString() }));
-    d.proposals.unshift(...fresh);
-    d.lastScanAt = new Date().toISOString();
-    return fresh;
-  });
+  for (const account of accounts) {
+    const provider = await getProvider(account.id);
+    const ads = await provider.listAds();
+    scanned += ads.length;
+    const drafts = analyze(ads, { ...store.settings, currency: account.currency });
 
-  const auto = store.settings.autopilot.autoPause
-    ? created.filter((p) => p.kind === "pause_ad" && p.severity === "high")
-    : [];
-  for (const p of auto) {
-    await resolveProposal(p.id, "approved", "agent");
+    const created = await updateStore((d) => {
+      const openKeys = new Set(d.proposals.filter((p) => p.status === "pending").map((p) => p.key));
+      const fresh: Proposal[] = drafts
+        .map((x) => ({ ...x, key: `${account.id}:${x.key}` }))
+        .filter((x) => !openKeys.has(x.key))
+        .map((x) => ({
+          ...x,
+          title: accounts.length > 1 ? `${x.title} · ${account.name}` : x.title,
+          accountId: account.id,
+          id: newId("prp"),
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        }));
+      d.proposals.unshift(...fresh);
+      return fresh;
+    });
+    createdCount += created.length;
+
+    for (const p of created.filter((x) => autoAllowed(x, store.settings))) {
+      await resolveProposal(p.id, "approved", "agent");
+      autoCount++;
+    }
   }
 
+  await updateStore((d) => void (d.lastScanAt = new Date().toISOString()));
   await logActivity(
     "agent",
     "scan",
-    `Átnéztem ${ads.length} hirdetést (${trigger}). ${created.length} új javaslat${auto.length ? `, ${auto.length} automatikusan végrehajtva` : ""}.`,
+    `Átnéztem ${scanned} hirdetést ${accounts.length} fiókban (${trigger === "cron" ? "ütemezett" : trigger === "manual" ? "kézi" : "asszisztens"}). ${createdCount} új javaslat${autoCount ? `, ${autoCount} automatikusan végrehajtva` : ""}.`,
   );
-  return { scanned: ads.length, created: created.length, autoExecuted: auto.length };
+  return { scanned, created: createdCount, autoExecuted: autoCount };
 }
 
 export async function resolveProposal(
@@ -162,7 +189,7 @@ export async function resolveProposal(
   let result: string;
   let status: Proposal["status"] = "executed";
   try {
-    result = await executeAction(p.action);
+    result = await executeAction(p.action, p.accountId);
   } catch (e) {
     result = e instanceof Error ? e.message : String(e);
     status = "failed";

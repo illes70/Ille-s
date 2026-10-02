@@ -2,7 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
-import type { Settings } from "@/lib/types";
+import type { AutopilotLevel, Settings } from "@/lib/types";
+
+const LEVELS: { id: AutopilotLevel; label: string; desc: (ap: Settings["autopilot"]) => string }[] = [
+  { id: "ask", label: "Mindig kérdez", desc: () => "Minden változtatás javaslatként érkezik, semmi nem történik a jóváhagyásod nélkül." },
+  {
+    id: "bounded",
+    label: "Kereten belül automata",
+    desc: (ap) => `Magától leállítja, ami a cél CPL ${ap.autoPauseSpendMultiplier}-szorosát elköltötte lead nélkül, és legfeljebb ${ap.maxBudgetIncreasePct}%-kal emeli a nyerők büdzséjét. Minden más kérdés.`,
+  },
+  { id: "full", label: "Teljes automata", desc: () => "Minden végrehajtható javaslatot azonnal megcsinál, és utólag jelent." },
+];
 import { Page, PageHeader } from "@/components/PageHeader";
 import { usePoll } from "@/components/usePoll";
 
@@ -47,15 +57,20 @@ export default function SettingsPage() {
 
         <section className="card space-y-5 p-6">
           <h2 className="font-semibold">Robotpilóta</h2>
-          <label className="flex items-start gap-3">
-            <input type="checkbox" checked={ap.autoPause} onChange={(e) => setAp({ autoPause: e.target.checked })} className="mt-1 size-4 accent-[var(--accent)]" />
-            <span>
-              <span className="block text-sm font-medium">Automatikus leállítás</span>
-              <span className="block text-[13px] text-muted">
-                Kérdezés nélkül leállítja azt a hirdetést, ami a cél CPL {ap.autoPauseSpendMultiplier}-szorosát elköltötte lead nélkül.
-              </span>
-            </span>
-          </label>
+          <div className="space-y-2">
+            {LEVELS.map((l) => (
+              <label
+                key={l.id}
+                className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${ap.level === l.id ? "border-accent bg-accent-soft/50" : "border-line"}`}
+              >
+                <input type="radio" name="level" checked={ap.level === l.id} onChange={() => setAp({ level: l.id })} className="mt-1 accent-[var(--accent)]" />
+                <span>
+                  <span className="block text-sm font-medium">{l.label}</span>
+                  <span className="block text-[13px] text-muted">{l.desc(ap)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
           <Field label={`Leállítási küszöb: cél CPL × ${ap.autoPauseSpendMultiplier}`}>
             <input type="range" min={1} max={6} step={0.5} value={ap.autoPauseSpendMultiplier} onChange={(e) => setAp({ autoPauseSpendMultiplier: Number(e.target.value) })} className="w-full accent-[var(--accent)]" />
           </Field>

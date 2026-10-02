@@ -6,7 +6,7 @@ const Settings = z.object({
   targetCpl: z.number().positive(),
   brandVoice: z.string().max(2000),
   autopilot: z.object({
-    autoPause: z.boolean(),
+    level: z.enum(["ask", "bounded", "full"]),
     autoPauseSpendMultiplier: z.number().min(1).max(10),
     maxBudgetIncreasePct: z.number().min(0).max(100),
     frequencyLimit: z.number().min(1).max(10),

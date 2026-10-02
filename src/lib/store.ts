@@ -2,16 +2,24 @@ import "server-only";
 import { promises as fs } from "fs";
 import path from "path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Activity, Ad, Lead, Proposal, Settings } from "./types";
-import { demoAds, demoLeads, demoSettings } from "./demo-data";
+import type { Activity, Ad, Lead, LeadStatus, Proposal, Recipe, Settings } from "./types";
+import { demoAds, demoLeads, demoRecipes, demoSettings } from "./demo-data";
 
 // Single-tenant JSON store for the MVP. Swap for Postgres when OCP goes multi-tenant.
 
+const VERSION = 2;
+
 export interface StoreData {
+  version: number;
   settings: Settings;
+  /** ad account the UI and the assistant currently work on */
+  activeAccountId?: string;
+  recipes: Recipe[];
   /** demo-mode ads (in Meta mode ads are always read live) */
   ads: Ad[];
   leads: Lead[];
+  /** status OCP tracks per lead id (Meta has no lead pipeline) */
+  leadStatus: Record<string, LeadStatus>;
   proposals: Proposal[];
   activity: Activity[];
   /** full Claude message history of the assistant chat (append-only) */
@@ -27,9 +35,12 @@ let queue: Promise<unknown> = Promise.resolve();
 
 function seed(): StoreData {
   return {
+    version: VERSION,
     settings: structuredClone(demoSettings),
+    recipes: structuredClone(demoRecipes),
     ads: structuredClone(demoAds),
     leads: structuredClone(demoLeads),
+    leadStatus: {},
     proposals: [],
     activity: [],
     chat: [],
@@ -40,6 +51,7 @@ async function load(): Promise<StoreData> {
   if (cache) return cache;
   try {
     cache = JSON.parse(await fs.readFile(FILE, "utf8")) as StoreData;
+    if (cache.version !== VERSION) cache = seed();
   } catch {
     cache = seed();
   }

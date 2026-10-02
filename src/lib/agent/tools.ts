@@ -1,10 +1,10 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { getProvider } from "../meta/provider";
+import { getLeads, getProvider } from "../meta/provider";
 import { logActivity, newId, readStore, updateStore } from "../store";
 import { runScan } from "../engine/monitor";
-import type { Proposal } from "../types";
+import type { Proposal, Recipe } from "../types";
 
 type Tool = Anthropic.Beta.Messages.BetaTool;
 
@@ -44,7 +44,9 @@ const tools = [
       const leads = ads.reduce((s, a) => s + a.metrics.leads, 0);
       return {
         mode: provider.mode,
-        currency: store.settings.currency,
+        account: provider.account,
+        otherAccounts: (await provider.listAccounts()).filter((a) => a.id !== provider.account.id),
+        currency: provider.account.currency,
         targetCpl: store.settings.targetCpl,
         autopilot: store.settings.autopilot,
         brandVoice: store.settings.brandVoice,
@@ -72,7 +74,7 @@ const tools = [
         sort_by === "cpl" ? (a.metrics.cpl ?? Infinity) : a.metrics[sort_by];
       return ads
         .sort((a, b) => (sort_by === "cpl" ? key(a) - key(b) : key(b) - key(a)))
-        .map(({ spendTrend: _t, ...a }) => a);
+        .map(({ daily: _d, ...a }) => a);
     },
   ),
   tool(
@@ -120,6 +122,7 @@ const tools = [
       activate: z.boolean().default(false),
       lead_form_id: z.string().optional(),
       link_url: z.string().optional(),
+      recipe_id: z.string().optional().describe("ha egy recept alapján készül, annak az azonosítója"),
       ads: z
         .array(
           z.object({
@@ -135,7 +138,7 @@ const tools = [
         .max(20),
     }),
     (i) => `${i.ads.length} hirdetés feltöltése`,
-    async ({ adset_id, activate, lead_form_id, link_url, ads }) => {
+    async ({ adset_id, activate, lead_form_id, link_url, recipe_id, ads }) => {
       const provider = await getProvider();
       const results = [];
       for (const ad of ads) {
@@ -150,6 +153,7 @@ const tools = [
             reuseImageFromAdId: ad.reuse_image_from_ad_id,
             leadFormId: lead_form_id,
             linkUrl: link_url,
+            recipeId: recipe_id,
             activate,
           });
           results.push({ name: ad.name, id, ok: true });
@@ -192,7 +196,76 @@ const tools = [
     "Legutóbbi leadek egyszerűsített formában (név, telefon, email, város, megjegyzés, melyik hirdetésből).",
     z.object({ limit: z.number().int().min(1).max(100).default(20) }),
     () => "Leadek lekérése",
-    async ({ limit }) => (await (await getProvider()).listLeads()).slice(0, limit),
+    async ({ limit }) => (await getLeads()).slice(0, limit),
+  ),
+  tool(
+    "set_lead_status",
+    "Lead státuszának állítása: new (új), contacted (felhívva), survey (felmérés), won (megnyert), lost (elveszett).",
+    z.object({ lead_id: z.string(), status: z.enum(["new", "contacted", "survey", "won", "lost"]) }),
+    () => "Lead státusz módosítása",
+    async ({ lead_id, status }) => {
+      await updateStore((d) => void (d.leadStatus[lead_id] = status));
+      return { ok: true };
+    },
+  ),
+  tool(
+    "get_ad_daily",
+    "Egy hirdetés napi bontású adatai (költés, megjelenés, kattintás, lead) az elmúlt N napra. Trendek, kiugrások vizsgálatához.",
+    z.object({ ad_id: z.string(), days: z.number().int().min(1).max(90).default(14) }),
+    () => "Napi adatok lekérése",
+    async ({ ad_id, days }) => {
+      const ad = (await (await getProvider()).listAds()).find((a) => a.id === ad_id);
+      if (!ad) throw new Error(`Nincs ilyen hirdetés: ${ad_id}`);
+      return { name: ad.name, daily: ad.daily.slice(-days) };
+    },
+  ),
+  tool(
+    "list_recipes",
+    "A bevált hirdetés-receptek (kreatívformák) listája: mi nem változhat, mi kötelező, mi szabad, szövegsablon, és a példa-hirdetés eredménye. Új hirdetések készítésekor ezekből indulj ki.",
+    z.object({}),
+    () => "Receptek lekérése",
+    async () => {
+      const [store, ads] = await Promise.all([readStore(), getProvider().then((p) => p.listAds())]);
+      return store.recipes.map((r) => {
+        const used = ads.filter((a) => a.creative.recipeId === r.id || a.id === r.exampleAdId);
+        const spend = used.reduce((s, a) => s + a.metrics.spend, 0);
+        const leads = used.reduce((s, a) => s + a.metrics.leads, 0);
+        return { ...r, ads: used.length, last7d: { spend, leads, cpl: leads ? Math.round(spend / leads) : null } };
+      });
+    },
+  ),
+  tool(
+    "create_recipe",
+    "Új recept mentése egy jól teljesítő hirdetésből, hogy más ajánlatokra/ügyfelekre is át lehessen vinni.",
+    z.object({
+      name: z.string(),
+      description: z.string(),
+      fixed: z.array(z.string()).min(1),
+      required: z.array(z.string()),
+      free: z.array(z.string()),
+      text_template: z.string(),
+      example_ad_id: z.string().optional(),
+    }),
+    () => "Recept mentése",
+    async (i) => {
+      const ads = await (await getProvider()).listAds();
+      const example = ads.find((a) => a.id === i.example_ad_id);
+      const r: Recipe = {
+        id: newId("rcp"),
+        name: i.name,
+        description: i.description,
+        fixed: i.fixed,
+        required: i.required,
+        free: i.free,
+        textTemplate: i.text_template,
+        exampleAdId: i.example_ad_id,
+        palette: example?.creative.palette ?? ["#334155", "#0f172a"],
+        createdAt: new Date().toISOString(),
+      };
+      await updateStore((d) => void d.recipes.unshift(r));
+      await logActivity("agent", "create", `Új recept: ${r.name}`);
+      return { id: r.id };
+    },
   ),
   tool(
     "run_monitor_scan",
@@ -239,6 +312,7 @@ const tools = [
         action: i.action,
         status: "pending",
         createdAt: new Date().toISOString(),
+        accountId: (await getProvider()).account.id,
       };
       await updateStore((d) => void d.proposals.unshift(p));
       await logActivity("agent", "proposal", `Új javaslat: ${p.title}`);

@@ -1,5 +1,11 @@
 export type AdStatus = "ACTIVE" | "PAUSED";
 
+export interface AdAccount {
+  id: string;
+  name: string;
+  currency: string;
+}
+
 export interface AdMetrics {
   /** Last 7 days, account currency */
   spend: number;
@@ -14,6 +20,15 @@ export interface AdMetrics {
   cpl: number | null;
 }
 
+/** One day of delivery for one ad. `date` is YYYY-MM-DD. */
+export interface DailyPoint {
+  date: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+}
+
 export interface Creative {
   headline: string;
   primaryText: string;
@@ -21,10 +36,15 @@ export interface Creative {
   imageUrl?: string;
   /** used to render a branded preview when there is no image */
   palette?: [string, string];
+  /** recipe the creative was built from */
+  recipeId?: string;
 }
+
+export type LearningStatus = "LEARNING" | "SUCCESS" | "FAIL";
 
 export interface Ad {
   id: string;
+  accountId: string;
   name: string;
   status: AdStatus;
   campaignId: string;
@@ -32,10 +52,12 @@ export interface Ad {
   adsetId: string;
   adsetName: string;
   adsetDailyBudget: number;
+  adsetLearning?: LearningStatus;
   creative: Creative;
+  /** last 7 days summary (used by the monitor) */
   metrics: AdMetrics;
-  /** daily spend for the last 7 days, oldest first */
-  spendTrend: number[];
+  /** daily delivery, oldest first (up to 90 days) */
+  daily: DailyPoint[];
   createdAt: string;
 }
 
@@ -59,6 +81,7 @@ export interface ProposalAction {
 
 export interface Proposal {
   id: string;
+  accountId?: string;
   /** dedupe key so the monitor doesn't raise the same thing twice */
   key: string;
   kind: ProposalKind;
@@ -80,12 +103,15 @@ export interface Activity {
   id: string;
   ts: string;
   actor: ActivityActor;
-  kind: "scan" | "action" | "proposal" | "chat" | "create" | "error";
+  kind: "scan" | "action" | "proposal" | "chat" | "create" | "error" | "lead";
   text: string;
 }
 
+export type LeadStatus = "new" | "contacted" | "survey" | "won" | "lost";
+
 export interface Lead {
   id: string;
+  accountId?: string;
   createdAt: string;
   adId?: string;
   formName: string;
@@ -94,7 +120,27 @@ export interface Lead {
   email?: string;
   city?: string;
   note?: string;
+  status: LeadStatus;
 }
+
+/** A proven ad format that can be reused for other offers/clients. */
+export interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  /** must stay exactly like this */
+  fixed: string[];
+  /** must be filled in for the new offer */
+  required: string[];
+  /** free to change */
+  free: string[];
+  textTemplate: string;
+  exampleAdId?: string;
+  palette: [string, string];
+  createdAt: string;
+}
+
+export type AutopilotLevel = "ask" | "bounded" | "full";
 
 export interface Settings {
   currency: string;
@@ -102,8 +148,12 @@ export interface Settings {
   targetCpl: number;
   brandVoice: string;
   autopilot: {
-    /** pause ads automatically (without asking) when they burn budget with no result */
-    autoPause: boolean;
+    /**
+     * ask: everything waits for approval
+     * bounded: pause zero-result spenders + scale winners within maxBudgetIncreasePct on its own
+     * full: every actionable proposal is executed on its own
+     */
+    level: AutopilotLevel;
     /** pause when spend >= targetCpl * this multiplier and 0 leads */
     autoPauseSpendMultiplier: number;
     /** max % budget raise in one step */
