@@ -12,7 +12,7 @@ interface AccountsResponse {
 }
 
 export function AccountSwitcher() {
-  const [data, reload] = usePollWithRefresh<AccountsResponse>("/api/accounts", 120_000);
+  const [data, reload] = usePollWithRefresh<AccountsResponse>("/api/accounts");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 

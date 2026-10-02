@@ -1,4 +1,4 @@
-import type { Ad, AdAccount, DailyPoint, Lead, Recipe, Settings } from "./types";
+import type { Ad, AdAccount, Company, DailyPoint, Lead, Recipe, Settings } from "./types";
 
 // Fictional demo accounts so OCP is fully usable before a Meta account is connected.
 
@@ -13,13 +13,50 @@ export const demoAccounts: AdAccount[] = [
 export const demoSettings: Settings = {
   currency: "HUF",
   targetCpl: 2500,
-  brandVoice:
-    "Közvetlen, magabiztos, tegeződő. Rövid mondatok, konkrét előny az első sorban, nincs túlzó ígéret.",
   autopilot: {
     level: "bounded",
     autoPauseSpendMultiplier: 3,
     maxBudgetIncreasePct: 25,
     frequencyLimit: 3.5,
+  },
+};
+
+export const demoCompanies: Record<string, Company> = {
+  act_demo_1: {
+    accountId: "act_demo_1",
+    name: "Felújítás Pro Kft.",
+    industry: "Lakásfelújítás (fürdőszoba, konyha, villany, festés)",
+    services: [
+      { name: "Fürdőszoba felújítás", price: "89 000 Ft/m²-től, anyaggal" },
+      { name: "Konyha felújítás", price: "egyedi árajánlat" },
+      { name: "Villanyszerelés – hibaelhárítás", price: "kiszállás 15 000 Ft" },
+      { name: "Szobafestés", price: "2 900 Ft/m²-től" },
+    ],
+    phone: "+36 30 555 1234",
+    area: "Budapest és Pest megye",
+    website: "https://felujitaspro.example.hu",
+    usp: "Fix ár, fix határidő. 312 elégedett ügyfél (4.9★). Takarítás a munka után.",
+    brandVoice: "Közvetlen, magabiztos, tegeződő. Rövid mondatok, konkrét előny az első sorban, nincs túlzó ígéret.",
+    colors: ["#16a34a", "#052e16"],
+    notes: "50 m² alatti burkolást nem vállalnak. Hétvégén csak sürgős villanyos hibát.",
+    updatedAt: daysAgo(3),
+  },
+  act_demo_2: {
+    accountId: "act_demo_2",
+    name: "Klíma & Hőszivattyú Bt.",
+    industry: "Klíma és hőszivattyú telepítés",
+    services: [
+      { name: "Klíma telepítéssel", price: "329 000 Ft-tól" },
+      { name: "Hőszivattyú", price: "támogatással akár 50% kedvezmény" },
+    ],
+    phone: "+36 20 777 4321",
+    area: "Budapest + 30 km",
+    website: "https://klimahoszivattyu.example.hu",
+    usp: "Telepítés 1 héten belül, 5 év garancia, ingyenes felmérés.",
+    brandVoice: "Szakértő, de barátságos. Számokkal érvel (megtakarítás, garancia).",
+    colors: ["#0891b2", "#083344"],
+    notes: "",
+    updatedAt: daysAgo(10),
   },
 };
 

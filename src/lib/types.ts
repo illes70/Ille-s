@@ -38,6 +38,8 @@ export interface Creative {
   palette?: [string, string];
   /** recipe the creative was built from */
   recipeId?: string;
+  /** video ad: imageUrl is the cover frame */
+  isVideo?: boolean;
 }
 
 export type LearningStatus = "LEARNING" | "SUCCESS" | "FAIL";
@@ -140,13 +142,75 @@ export interface Recipe {
   createdAt: string;
 }
 
+/** Everything the assistant must know about one advertiser (one ad account). */
+export interface Company {
+  accountId: string;
+  name: string;
+  industry: string;
+  services: { name: string; price?: string }[];
+  phone: string;
+  area: string;
+  website: string;
+  /** why choose them: guarantees, speed, reviews… */
+  usp: string;
+  brandVoice: string;
+  /** overrides the global target cost per lead */
+  targetCpl?: number;
+  /** Facebook Page that runs the ads and owns the lead forms */
+  pageId?: string;
+  logoUrl?: string;
+  colors: [string, string];
+  notes: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeEntry {
+  id: string;
+  title: string;
+  body: string;
+  source?: string;
+  tags: string[];
+  /** own = the user's experience (wins over the playbook) */
+  kind: "own" | "playbook";
+  createdAt: string;
+}
+
+export interface MetaPage {
+  id: string;
+  name: string;
+  /** page access token (needed for lead forms, leads, webhook subscription) */
+  token: string;
+  leadgenSubscribed?: boolean;
+}
+
+export interface MetaAuth {
+  userId: string;
+  userName: string;
+  /** long-lived user access token */
+  token: string;
+  expiresAt?: string;
+  scopes: string[];
+  pages: MetaPage[];
+  connectedAt: string;
+}
+
+export interface MediaItem {
+  id: string;
+  /** served by OCP: /api/media/<file> */
+  url: string;
+  file: string;
+  kind: "upload" | "generated" | "composed";
+  prompt?: string;
+  accountId?: string;
+  createdAt: string;
+}
+
 export type AutopilotLevel = "ask" | "bounded" | "full";
 
 export interface Settings {
   currency: string;
-  /** target cost per lead */
+  /** default target cost per lead (a company can override it) */
   targetCpl: number;
-  brandVoice: string;
   autopilot: {
     /**
      * ask: everything waits for approval
@@ -162,6 +226,14 @@ export interface Settings {
     frequencyLimit: number;
   };
 }
+
+/** Pushed from the server to every open browser over /api/live (SSE). */
+export type LiveEvent =
+  | { type: "invalidate"; keys: LiveKey[] }
+  | { type: "lead"; lead: Lead; accountName?: string }
+  | { type: "hello"; at: string };
+
+export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health";
 
 export interface ChatTurnEvent {
   type: "text" | "tool_start" | "tool_end" | "error" | "done";

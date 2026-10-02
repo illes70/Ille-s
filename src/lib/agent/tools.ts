@@ -4,9 +4,23 @@ import { z } from "zod";
 import { getLeads, getProvider } from "../meta/provider";
 import { logActivity, newId, readStore, updateStore } from "../store";
 import { runScan } from "../engine/monitor";
-import type { Proposal, Recipe } from "../types";
+import { getCompany, saveCompany, searchKnowledge } from "../company";
+import { composeAdImage } from "../creative/render";
+import { generatePhoto } from "../creative/generate";
+import { claudeImageBlock } from "../creative/claude-files";
+import type { KnowledgeEntry, Proposal, Recipe } from "../types";
 
 type Tool = Anthropic.Beta.Messages.BetaTool;
+type ToolResultContent = Exclude<Anthropic.Beta.Messages.BetaToolResultBlockParam["content"], string | undefined>;
+
+/** A tool result that carries images (e.g. a composed ad) so the assistant can look at it. */
+class Rich {
+  constructor(readonly blocks: ToolResultContent) {}
+}
+
+async function withImage(text: unknown, url: string) {
+  return new Rich([{ type: "text", text: JSON.stringify(text) }, await claudeImageBlock(url)] as ToolResultContent);
+}
 
 interface ToolDef<S extends z.ZodType> {
   schema: S;
@@ -42,14 +56,15 @@ const tools = [
       const [ads, store] = await Promise.all([provider.listAds(), readStore()]);
       const spend = ads.reduce((s, a) => s + a.metrics.spend, 0);
       const leads = ads.reduce((s, a) => s + a.metrics.leads, 0);
+      const company = await getCompany();
       return {
         mode: provider.mode,
         account: provider.account,
         otherAccounts: (await provider.listAccounts()).filter((a) => a.id !== provider.account.id),
         currency: provider.account.currency,
-        targetCpl: store.settings.targetCpl,
+        targetCpl: company.targetCpl ?? store.settings.targetCpl,
         autopilot: store.settings.autopilot,
-        brandVoice: store.settings.brandVoice,
+        company,
         last7d: { spend, leads, cpl: leads ? Math.round(spend / leads) : null },
         activeAds: ads.filter((a) => a.status === "ACTIVE").length,
         totalAds: ads.length,
@@ -116,7 +131,7 @@ const tools = [
   ),
   tool(
     "create_ads",
-    "Új hirdetések feltöltése egy meglévő hirdetéscsoportba. Minden variánshoz kell kép: image_url (nyilvános URL) vagy reuse_image_from_ad_id (egy meglévő hirdetés képe). Alapból PAUSED állapotban jönnek létre; activate=true csak ha a felhasználó kifejezetten kérte az élesítést.",
+    "Új hirdetések feltöltése egy meglévő hirdetéscsoportba. Minden variánshoz kell kép: image_url (OCP kép: /api/media/…, vagy nyilvános URL – pl. a compose_ad_image eredménye) vagy reuse_image_from_ad_id (egy meglévő hirdetés képe). Alapból PAUSED állapotban jönnek létre; activate=true csak ha a felhasználó kifejezetten kérte az élesítést.",
     z.object({
       adset_id: z.string(),
       activate: z.boolean().default(false),
@@ -204,7 +219,7 @@ const tools = [
     z.object({ lead_id: z.string(), status: z.enum(["new", "contacted", "survey", "won", "lost"]) }),
     () => "Lead státusz módosítása",
     async ({ lead_id, status }) => {
-      await updateStore((d) => void (d.leadStatus[lead_id] = status));
+      await updateStore((d) => void (d.leadStatus[lead_id] = status), ["leads"]);
       return { ok: true };
     },
   ),
@@ -262,9 +277,153 @@ const tools = [
         palette: example?.creative.palette ?? ["#334155", "#0f172a"],
         createdAt: new Date().toISOString(),
       };
-      await updateStore((d) => void d.recipes.unshift(r));
+      await updateStore((d) => void d.recipes.unshift(r), ["recipes"]);
       await logActivity("agent", "create", `Új recept: ${r.name}`);
       return { id: r.id };
+    },
+  ),
+  tool(
+    "get_company_profile",
+    "Az aktív cég profilja: szolgáltatások és árak, telefonszám, terület, weboldal, miért őket válasszák (usp), márkahang, színek, megjegyzések, Facebook-oldal. Minden szöveg és kép ezen alapuljon.",
+    z.object({}),
+    () => "Cégprofil betöltése",
+    async () => getCompany(),
+  ),
+  tool(
+    "update_company_profile",
+    "Cégprofil frissítése (csak a megadott mezők változnak). Akkor használd, ha a felhasználó új infót ad a cégről (ár, szolgáltatás, telefonszám, hangnem…).",
+    z.object({
+      name: z.string().optional(),
+      industry: z.string().optional(),
+      services: z.array(z.object({ name: z.string(), price: z.string().optional() })).optional(),
+      phone: z.string().optional(),
+      area: z.string().optional(),
+      website: z.string().optional(),
+      usp: z.string().optional(),
+      brandVoice: z.string().optional(),
+      targetCpl: z.number().positive().optional(),
+      notes: z.string().optional(),
+    }),
+    () => "Cégprofil frissítése",
+    async (patch) => {
+      const accountId = (await getProvider()).account.id;
+      const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+      const c = await saveCompany({ ...clean, accountId });
+      await logActivity("agent", "action", `Cégprofil frissítve: ${Object.keys(clean).join(", ")}`);
+      return c;
+    },
+  ),
+  tool(
+    "search_knowledge",
+    "Keresés a tudásbázisban (a felhasználó saját tapasztalatai + OCP döntési kézikönyv: leállítás, skálázás, tanulási fázis, kreatív fáradás, ajánlatépítés, horgok, űrlapok). Döntés vagy javaslat előtt hívd meg, és a saját (own) bejegyzéseket részesítsd előnyben.",
+    z.object({ query: z.string() }),
+    (i) => `Tudásbázis: „${i.query}”`,
+    async ({ query }) => (await searchKnowledge(query)).map(({ id, title, body, kind, source }) => ({ id, title, body, kind, source })),
+  ),
+  tool(
+    "add_knowledge",
+    "Tanulság mentése a tudásbázisba a felhasználó saját tapasztalataként (pl. „ennél az ügyfélnél a zöld dobozos kép mindig nyer”). Akkor használd, ha a felhasználó megoszt egy tapasztalatot, vagy kéri, hogy jegyezd meg.",
+    z.object({ title: z.string(), body: z.string(), tags: z.array(z.string()).default([]) }),
+    () => "Tanulság mentése",
+    async (i) => {
+      const entry: KnowledgeEntry = { id: newId("kb"), kind: "own", createdAt: new Date().toISOString(), ...i, source: "Chat" };
+      await updateStore((d) => void d.knowledge.unshift(entry), ["knowledge"]);
+      await logActivity("agent", "create", `Tudásbázis: ${i.title}`);
+      return { id: entry.id };
+    },
+  ),
+  tool(
+    "compose_ad_image",
+    "Hirdetéskép készítése pontos szöveggel egy fotóra (ingyenes, a szöveg mindig hibátlan). Sablonok: green_box (sötétzöld dobozok: márka, szolgáltatás, ár, felszólítás, alsó sor, telefon – a „Zöld dobozos” recept), headline_band (fotó + alul márkaszínű sáv headline-nal és gombbal), before_after (két fotó: előtte/utána + sáv). Fotó: a felhasználó feltöltött képe, egy meglévő hirdetés képe (list_ads → creative.imageUrl) vagy generate_photo eredménye. Az eredményt megnézheted, és mehet a create_ads / update_ad_creative image_url-jébe.",
+    z.object({
+      template: z.enum(["green_box", "headline_band", "before_after"]),
+      photo_url: z.string().optional(),
+      photo2_url: z.string().optional().describe("before_after: az „utána” fotó"),
+      brand: z.string().optional(),
+      service: z.string().optional(),
+      price: z.string().optional().describe("pl. „17 000 Ft / m²”"),
+      price_note: z.string().optional().describe("pl. „(anyag + munkadíj)”"),
+      headline: z.string().optional(),
+      subline: z.string().optional(),
+      cta: z.string().optional(),
+      bottom_line: z.string().optional(),
+      phone: z.string().optional(),
+      format: z.enum(["feed", "square", "story"]).default("feed"),
+    }),
+    (i) => `Hirdetéskép készítése (${i.template})`,
+    async (i) => {
+      const company = await getCompany();
+      const item = await composeAdImage({
+        template: i.template,
+        photoUrl: i.photo_url,
+        photo2Url: i.photo2_url,
+        brand: i.brand,
+        service: i.service,
+        price: i.price,
+        priceNote: i.price_note,
+        headline: i.headline,
+        subline: i.subline,
+        cta: i.cta,
+        bottomLine: i.bottom_line,
+        phone: i.phone,
+        format: i.format,
+        colors: company.colors,
+        accountId: company.accountId,
+      });
+      await logActivity("agent", "create", `Hirdetéskép elkészült (${i.template}): ${item.url}`);
+      return withImage({ image_url: item.url, note: "Mutasd meg a felhasználónak markdown képként: ![](" + item.url + ")" }, item.url);
+    },
+  ),
+  tool(
+    "generate_photo",
+    "Új fotó generálása AI-jal (OpenAI, képenként fizetős – csak ha a felhasználó kéri, vagy nincs használható fotó). Szöveget NE kérj a képre: a szöveget utána a compose_ad_image teszi rá pontosan. Valósághű, helyi munkafotó-stílust kérj, ne stock-hatást.",
+    z.object({ prompt: z.string(), size: z.enum(["1024x1024", "1024x1536", "1536x1024"]).default("1024x1536") }),
+    () => "Fotó generálása",
+    async ({ prompt, size }) => {
+      const item = await generatePhoto(prompt, size, (await getProvider()).account.id);
+      await logActivity("agent", "create", `AI fotó generálva: ${item.url}`);
+      return withImage({ image_url: item.url }, item.url);
+    },
+  ),
+  tool(
+    "list_media",
+    "A cég legutóbbi képei a médiatárban (feltöltött, generált, sablonos), URL-lel.",
+    z.object({ limit: z.number().int().min(1).max(50).default(12) }),
+    () => "Médiatár",
+    async ({ limit }) => {
+      const id = (await getProvider()).account.id;
+      return (await readStore()).media.filter((m) => !m.accountId || m.accountId === id).slice(0, limit);
+    },
+  ),
+  tool(
+    "update_ad_creative",
+    "Futó hirdetés szövegének és/vagy képének cseréje. A Metán ez új kreatívot jelent: a hirdetés újra ellenőrzésre megy, és a tanulás részben újraindulhat – ezt mondd el a felhasználónak. Tesztelésnél inkább új hirdetést javasolj mellé (create_ads).",
+    z.object({ ad_id: z.string(), headline: z.string().max(60).optional(), primary_text: z.string().max(600).optional(), image_url: z.string().optional() }),
+    () => "Kreatív cseréje",
+    async ({ ad_id, headline, primary_text, image_url }) => {
+      await (await getProvider()).updateAdCreative(ad_id, { headline, primaryText: primary_text, imageUrl: image_url });
+      await logActivity("agent", "action", `Kreatív frissítve: ${ad_id}${image_url ? " (új kép)" : ""}${headline || primary_text ? " (új szöveg)" : ""}`);
+      return { ok: true };
+    },
+  ),
+  tool(
+    "get_system_health",
+    "Rendszerállapot: Claude, Meta app, Facebook-kapcsolat és engedélyek, hirdetési fiókok, oldalak és azonnali leadek, webhook, képgenerálás. Ha valami nem működik, ezzel kezdd, és a megadott javítási lépéseket mondd el pontosan.",
+    z.object({}),
+    () => "Rendszerállapot ellenőrzése",
+    async () => {
+      const { runHealthChecks } = await import("../health");
+      return runHealthChecks(process.env.OCP_PUBLIC_URL ?? "http://localhost:3000");
+    },
+  ),
+  tool(
+    "get_ads_manager_link",
+    "Közvetlen link a Meta Ads Managerhez (a fiókhoz vagy egy konkrét hirdetéshez) – ha a felhasználónak kézzel kell valamit megnéznie vagy beállítania.",
+    z.object({ ad_id: z.string().optional() }),
+    () => "Ads Manager link",
+    async ({ ad_id }) => {
+      const { adsManagerUrl } = await import("../meta/graph");
+      return { url: adsManagerUrl((await getProvider()).account.id, ad_id) };
     },
   ),
   tool(
@@ -335,7 +494,7 @@ export function toolLabel(name: string, input: unknown): string {
   return parsed.success ? t.label(parsed.data as never) : name;
 }
 
-export async function runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string }> {
+export async function runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string | ToolResultContent }> {
   const t = tools.find((x) => x.definition.name === name);
   if (!t) return { ok: false, content: `Ismeretlen eszköz: ${name}` };
   const parsed = t.schema.safeParse(input);
@@ -344,6 +503,7 @@ export async function runTool(name: string, input: unknown): Promise<{ ok: boole
   }
   try {
     const result = await t.run(parsed.data as never);
+    if (result instanceof Rich) return { ok: true, content: result.blocks };
     return { ok: true, content: JSON.stringify(result ?? { ok: true }) };
   } catch (e) {
     return { ok: false, content: e instanceof Error ? e.message : String(e) };

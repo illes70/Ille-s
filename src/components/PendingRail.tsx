@@ -9,7 +9,7 @@ import { usePoll } from "./usePoll";
 
 /** Right-hand rail next to the chat: what needs a decision + what the robot is doing. */
 export function PendingRail() {
-  const proposals = usePoll<Proposal[]>("/api/proposals", 8000);
+  const proposals = usePoll<Proposal[]>("/api/proposals");
   const pending = proposals?.filter((p) => p.status === "pending") ?? [];
 
   return (

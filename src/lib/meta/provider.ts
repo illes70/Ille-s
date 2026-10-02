@@ -1,6 +1,7 @@
 import "server-only";
 import type { Ad, AdAccount, AdStatus, Lead } from "../types";
 import { readStore } from "../store";
+import { adsChanged } from "../live-bus";
 
 export interface NewAdInput {
   adsetId: string;
@@ -15,6 +16,13 @@ export interface NewAdInput {
   leadFormId?: string;
   recipeId?: string;
   activate: boolean;
+}
+
+export interface CreativeUpdate {
+  headline?: string;
+  primaryText?: string;
+  /** OCP media URL (/api/media/…) or public URL */
+  imageUrl?: string;
 }
 
 export interface LeadFormInput {
@@ -36,15 +44,20 @@ export interface AdsProvider {
   setAdStatus(adId: string, status: AdStatus): Promise<void>;
   setAdsetBudget(adsetId: string, dailyBudget: number): Promise<void>;
   createAd(input: NewAdInput): Promise<{ id: string }>;
+  /** change text and/or image of a running ad (Meta: new creative + re-review) */
+  updateAdCreative(adId: string, change: CreativeUpdate): Promise<void>;
   createLeadForm(input: LeadFormInput): Promise<{ id: string }>;
   /** raw leads from the platform; statuses are applied from the store by `getLeads` */
   listLeads(): Promise<Lead[]>;
 }
 
-export const metaConfigured = () => !!process.env.META_ACCESS_TOKEN;
+/** Meta mode when there is a token from Facebook Login or from .env. */
+export async function metaConfigured(): Promise<boolean> {
+  return !!(process.env.META_ACCESS_TOKEN || (await readStore()).metaAuth?.token);
+}
 
 export async function listAccounts(): Promise<AdAccount[]> {
-  if (metaConfigured()) {
+  if (await metaConfigured()) {
     const { listMetaAccounts } = await import("./graph");
     return listMetaAccounts();
   }
@@ -58,12 +71,31 @@ export async function getProvider(accountId?: string): Promise<AdsProvider> {
   if (!accounts.length) throw new Error("Nincs elérhető hirdetési fiók.");
   const wanted = accountId ?? (await readStore()).activeAccountId ?? process.env.META_AD_ACCOUNT_ID;
   const account = accounts.find((a) => a.id === wanted) ?? accounts[0];
-  if (metaConfigured()) {
+  let provider: AdsProvider;
+  if (await metaConfigured()) {
     const { MetaGraphProvider } = await import("./graph");
-    return new MetaGraphProvider(account, accounts);
+    provider = new MetaGraphProvider(account, accounts);
+  } else {
+    const { DemoProvider } = await import("./demo");
+    provider = new DemoProvider(account, accounts);
   }
-  const { DemoProvider } = await import("./demo");
-  return new DemoProvider(account, accounts);
+  return withLiveUpdates(provider);
+}
+
+/** Every successful change refreshes the ads cache and all open pages immediately. */
+function withLiveUpdates(p: AdsProvider): AdsProvider {
+  const after = <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
+    async (...args: A) => {
+      const r = await fn.apply(p, args);
+      adsChanged(p.account.id);
+      return r;
+    };
+  return Object.assign(Object.create(p) as AdsProvider, {
+    setAdStatus: after(p.setAdStatus),
+    setAdsetBudget: after(p.setAdsetBudget),
+    createAd: after(p.createAd),
+    updateAdCreative: after(p.updateAdCreative),
+  });
 }
 
 /** Leads of the active account with the statuses OCP keeps locally. */

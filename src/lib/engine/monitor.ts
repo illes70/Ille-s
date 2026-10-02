@@ -131,7 +131,7 @@ export async function runScan(trigger: "cron" | "manual" | "agent") {
     const provider = await getProvider(account.id);
     const ads = await provider.listAds();
     scanned += ads.length;
-    const drafts = analyze(ads, { ...store.settings, currency: account.currency });
+    const drafts = analyze(ads, { ...store.settings, currency: account.currency, targetCpl: store.companies[account.id]?.targetCpl ?? store.settings.targetCpl });
 
     const created = await updateStore((d) => {
       const openKeys = new Set(d.proposals.filter((p) => p.status === "pending").map((p) => p.key));

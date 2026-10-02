@@ -11,8 +11,8 @@ import { usePoll } from "@/components/usePoll";
 type RecipeRow = Recipe & { example: Ad | null; adCount: number; spend: number; leads: number };
 
 export default function RecipesPage() {
-  const recipes = usePoll<RecipeRow[]>("/api/recipes", 60_000);
-  const accounts = usePoll<{ active: { currency: string } }>("/api/accounts", 120_000);
+  const recipes = usePoll<RecipeRow[]>("/api/recipes");
+  const accounts = usePoll<{ active: { currency: string } }>("/api/accounts");
   const cur = accounts?.active.currency ?? "HUF";
 
   return (

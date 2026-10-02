@@ -1,5 +1,4 @@
-import { chatTranscript, runAgentTurn } from "@/lib/agent/run";
-import { updateStore } from "@/lib/store";
+import { chatTranscript, resetChat, runAgentTurn } from "@/lib/agent/run";
 import type { ChatTurnEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -10,13 +9,14 @@ export async function GET() {
 }
 
 export async function DELETE() {
-  await updateStore((d) => void (d.chat = []));
+  await resetChat();
   return Response.json({ ok: true });
 }
 
 export async function POST(req: Request) {
-  const { message } = (await req.json()) as { message?: string };
-  if (!message?.trim()) return Response.json({ error: "Üres üzenet" }, { status: 400 });
+  const { message, images = [] } = (await req.json()) as { message?: string; images?: string[] };
+  if (!message?.trim() && !images.length) return Response.json({ error: "Üres üzenet" }, { status: 400 });
+  const safeImages = images.filter((u) => /^\/api\/media\/[\w-]+\.(png|jpe?g|webp|gif)$/.test(u)).slice(0, 6);
 
   const encoder = new TextEncoder();
   const body = new ReadableStream({
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
         if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
           throw new Error("Hiányzik az ANTHROPIC_API_KEY – add meg a .env.local fájlban.");
         }
-        await runAgentTurn(message.trim(), emit);
+        await runAgentTurn(message?.trim() || "Nézd meg a csatolt képe(ke)t.", safeImages, emit);
       } catch (err) {
         emit({ type: "error", text: err instanceof Error ? err.message : String(err) });
         emit({ type: "done" });

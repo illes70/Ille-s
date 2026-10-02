@@ -1,16 +1,12 @@
-import { getProvider } from "@/lib/meta/provider";
+import { getAdsLive } from "@/lib/live";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const fresh = new URL(req.url).searchParams.has("fresh");
   try {
-    const provider = await getProvider();
-    return Response.json({
-      mode: provider.mode,
-      account: provider.account,
-      ads: await provider.listAds(),
-      fetchedAt: new Date().toISOString(),
-    });
+    const { mode, account, ads, fetchedAt } = await getAdsLive(undefined, fresh ? 0 : 30_000);
+    return Response.json({ mode, account, ads, fetchedAt });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
   }

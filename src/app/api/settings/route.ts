@@ -4,7 +4,6 @@ import { readStore, updateStore, logActivity } from "@/lib/store";
 const Settings = z.object({
   currency: z.string().length(3),
   targetCpl: z.number().positive(),
-  brandVoice: z.string().max(2000),
   autopilot: z.object({
     level: z.enum(["ask", "bounded", "full"]),
     autoPauseSpendMultiplier: z.number().min(1).max(10),

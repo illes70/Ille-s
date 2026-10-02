@@ -10,6 +10,7 @@ import { AdDrawer } from "@/components/AdDrawer";
 import { BarChart } from "@/components/BarChart";
 import { Funnel } from "@/components/Funnel";
 import { Page } from "@/components/PageHeader";
+import { LiveNumber } from "@/components/live/LiveNumber";
 import { usePoll, usePollWithRefresh } from "@/components/usePoll";
 
 interface AdsResponse {
@@ -34,9 +35,9 @@ const GRAINS: { id: Grain; label: string }[] = [
 ];
 
 export default function AdsPage() {
-  const [data, reload] = usePollWithRefresh<AdsResponse>("/api/ads", 15_000);
-  const settings = usePoll<Settings>("/api/settings", 60_000);
-  const leads = usePoll<Lead[]>("/api/leads", 15_000);
+  const [data, reload] = usePollWithRefresh<AdsResponse>("/api/ads");
+  const settings = usePoll<Settings>("/api/settings");
+  const leads = usePoll<Lead[]>("/api/leads");
 
   const [range, setRange] = useState<RangeId>("30");
   const [campaign, setCampaign] = useState("all");
@@ -109,16 +110,17 @@ export default function AdsPage() {
 
       {/* KPIs */}
       <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Kpi label="Költés" value={money(t.spend)} accent />
-        <Kpi label="Leadek" value={fmtNum(t.leads)} />
+        <Kpi label="Költés" value={t.spend} format={money} accent />
+        <Kpi label="Leadek" value={t.leads} format={(n) => fmtNum(Math.round(n))} />
         <Kpi
           label="Lead-költség"
-          value={t.cpl === null ? "–" : money(t.cpl)}
+          value={t.cpl}
+          format={money}
           hint={target ? `cél: ${money(target)}` : undefined}
           tone={t.cpl === null || !target ? undefined : t.cpl <= target ? "good" : "bad"}
         />
-        <Kpi label="CTR" value={`${t.ctr.toFixed(2)}%`} hint={`${fmtNum(t.clicks)} kattintás`} />
-        <Kpi label="CPM" value={money(t.cpm)} hint={`${fmtNum(t.impressions)} megjelenés`} />
+        <Kpi label="CTR" value={t.ctr} format={(n) => `${n.toFixed(2)}%`} hint={`${fmtNum(t.clicks)} kattintás`} />
+        <Kpi label="CPM" value={t.cpm} format={money} hint={`${fmtNum(t.impressions)} megjelenés`} />
       </section>
 
       {/* Trend + funnel */}
@@ -282,11 +284,14 @@ function Select({ value, onChange, all, options }: { value: string; onChange: (v
   );
 }
 
-function Kpi({ label, value, hint, tone, accent }: { label: string; value: string; hint?: string; tone?: "good" | "bad"; accent?: boolean }) {
+function Kpi(props: { label: string; value: number | null; format: (n: number) => string; hint?: string; tone?: "good" | "bad"; accent?: boolean }) {
+  const { label, value, format, hint, tone, accent } = props;
   return (
     <div className={`card p-4 ${accent ? "border-accent/40 bg-gradient-to-br from-accent-soft to-surface" : ""}`}>
       <p className="text-xs text-muted">{label}</p>
-      <p className={`tabular mt-1 text-2xl font-semibold tracking-tight ${tone === "good" ? "text-good" : tone === "bad" ? "text-bad" : ""}`}>{value}</p>
+      <p className={`mt-1 text-2xl font-semibold tracking-tight ${tone === "good" ? "text-good" : tone === "bad" ? "text-bad" : ""}`}>
+        {value === null ? "–" : <LiveNumber value={value} format={format} />}
+      </p>
       {hint && <p className="mt-0.5 text-[11px] text-muted">{hint}</p>}
     </div>
   );
@@ -313,11 +318,11 @@ function Freshness({ at, onRefresh }: { at?: string; onRefresh: () => void }) {
   return (
     <div className="flex items-center gap-2 text-xs text-muted">
       <span className="live-dot size-2 rounded-full bg-good" />
-      <span>{secs === null ? "Betöltés…" : secs < 5 ? "Élő · most frissült" : `Élő · ${secs} mp-e frissült`}</span>
+      <span>{secs === null ? "Betöltés…" : secs < 5 ? "Élő · most frissült" : `Élő · Meta-adat ${secs < 120 ? `${secs} mp` : `${Math.round(secs / 60)} perc`}-e`}</span>
       <button
         onClick={() => {
           setSpin(true);
-          onRefresh();
+          fetch("/api/ads?fresh=1").finally(onRefresh);
         }}
         className="rounded-lg border border-line bg-surface p-1.5 hover:text-fg"
         aria-label="Frissítés"

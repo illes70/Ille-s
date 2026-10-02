@@ -2,6 +2,9 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChatTurnEvent } from "../types";
 import { logActivity, readStore, updateStore } from "../store";
+import { getProvider } from "../meta/provider";
+import { getCompany } from "../company";
+import { claudeImageBlock } from "../creative/claude-files";
 import { SYSTEM_PROMPT } from "./prompt";
 import { clientTools, runTool, serverTools, toolLabel } from "./tools";
 
@@ -18,16 +21,26 @@ const client = new Anthropic();
  * executes client tools, and appends every completed step to the stored history
  * (append-only, so thinking blocks stay valid across turns).
  */
-export async function runAgentTurn(userText: string, emit: (e: ChatTurnEvent) => void) {
+export async function runAgentTurn(userText: string, images: string[], emit: (e: ChatTurnEvent) => void) {
+  // every company (ad account) has its own conversation
+  const accountId = (await getProvider()).account.id;
   const store = await readStore();
-  const history: MessageParam[] = [...store.chat];
-  const pending: MessageParam[] = [{ role: "user", content: userText }];
+  const history: MessageParam[] = [...(store.chats[accountId] ?? [])];
+
+  const content: Anthropic.Beta.Messages.BetaContentBlockParam[] = [];
+  if (!history.length) {
+    // new conversation: start it with who we work for (append-only afterwards)
+    content.push({ type: "text", text: `[Aktív cég – cégprofil]\n${JSON.stringify(await getCompany(accountId))}` });
+  }
+  for (const url of images) content.push(await claudeImageBlock(url));
+  content.push({ type: "text", text: images.length ? `${userText}\n\n${images.map((u) => `[kép: ${u}]`).join("\n")}` : userText });
+  const pending: MessageParam[] = [{ role: "user", content }];
   await logActivity("user", "chat", userText.length > 140 ? `${userText.slice(0, 140)}…` : userText);
 
   const commit = async () => {
     const msgs = pending.splice(0);
     history.push(...msgs);
-    await updateStore((d) => void d.chat.push(...msgs));
+    await updateStore((d) => void (d.chats[accountId] = [...(d.chats[accountId] ?? []), ...msgs]));
   };
 
   let jsonRetries = 0;
@@ -102,13 +115,20 @@ export async function runAgentTurn(userText: string, emit: (e: ChatTurnEvent) =>
   emit({ type: "done" });
 }
 
-/** Text-only view of the stored conversation for rendering the chat. */
+/** Displayable view of the active company's conversation. */
 export async function chatTranscript() {
-  const { chat } = await readStore();
-  const out: { role: "user" | "assistant"; text: string; tools?: string[] }[] = [];
+  const accountId = (await getProvider()).account.id;
+  const chat = (await readStore()).chats[accountId] ?? [];
+  const out: { role: "user" | "assistant"; text: string; images?: string[]; tools?: string[] }[] = [];
   for (const m of chat) {
     if (m.role === "user") {
-      if (typeof m.content === "string") out.push({ role: "user", text: m.content });
+      const blocks = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+      if (blocks.every((b) => b.type === "tool_result")) continue;
+      const text = blocks
+        .flatMap((b) => (b.type === "text" && !b.text.startsWith("[Aktív cég") ? [b.text] : []))
+        .join("\n");
+      const images = [...text.matchAll(/\[kép: ([^\]]+)\]/g)].map((x) => x[1]);
+      out.push({ role: "user", text: text.replace(/\n*\[kép: [^\]]+\]/g, "").trim(), images });
       continue;
     }
     if (typeof m.content === "string") continue;
@@ -125,4 +145,9 @@ export async function chatTranscript() {
     }
   }
   return out;
+}
+
+export async function resetChat() {
+  const accountId = (await getProvider()).account.id;
+  await updateStore((d) => void delete d.chats[accountId]);
 }

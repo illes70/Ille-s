@@ -16,7 +16,7 @@ const STATUSES: { id: LeadStatus; label: string; cls: string }[] = [
 ];
 
 export default function LeadsPage() {
-  const [leads, reload] = usePollWithRefresh<Lead[]>("/api/leads", 10_000);
+  const [leads, reload] = usePollWithRefresh<Lead[]>("/api/leads");
   const [filter, setFilter] = useState<LeadStatus | "all">("all");
   const shown = (leads ?? []).filter((l) => filter === "all" || l.status === filter);
 

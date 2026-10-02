@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { logActivity, updateStore } from "@/lib/store";
+import { logActivity } from "@/lib/store";
+import { ingestLead } from "@/lib/live";
 
 // Meta webhook for the Page `leadgen` field: new leads appear in OCP within seconds.
 // Setup: Meta app → Webhooks → Page → leadgen, callback = <OCP URL>/api/webhooks/meta,
@@ -23,7 +24,7 @@ function validSignature(body: string, header: string | null) {
 }
 
 interface LeadgenPayload {
-  entry?: { changes?: { field: string; value: { leadgen_id?: string } }[] }[];
+  entry?: { id?: string; changes?: { field: string; value: { leadgen_id?: string; page_id?: string } }[] }[];
 }
 
 export async function POST(req: Request) {
@@ -32,23 +33,19 @@ export async function POST(req: Request) {
     return new Response("invalid signature", { status: 401 });
   }
   const payload = JSON.parse(raw) as LeadgenPayload;
-  const ids = (payload.entry ?? [])
-    .flatMap((e) => e.changes ?? [])
-    .filter((c) => c.field === "leadgen" && c.value.leadgen_id)
-    .map((c) => c.value.leadgen_id!);
+  const items = (payload.entry ?? []).flatMap((e) =>
+    (e.changes ?? [])
+      .filter((c) => c.field === "leadgen" && c.value.leadgen_id)
+      .map((c) => ({ leadId: c.value.leadgen_id!, pageId: c.value.page_id ?? e.id })),
+  );
 
   const { fetchLead } = await import("@/lib/meta/graph");
-  for (const id of ids) {
+  for (const { leadId, pageId } of items) {
     try {
-      const lead = await fetchLead(id);
-      await updateStore((d) => {
-        if (!d.leads.some((l) => l.id === lead.id)) d.leads.unshift(lead);
-        d.leads = d.leads.slice(0, 2000);
-      });
-      await logActivity("system", "lead", `Új lead: ${lead.name}${lead.city ? ` (${lead.city})` : ""} – ${lead.formName}`);
+      await ingestLead(await fetchLead(leadId, pageId), "webhook");
     } catch (err) {
-      await logActivity("system", "error", `Lead webhook hiba (${id}): ${err instanceof Error ? err.message : String(err)}`);
+      await logActivity("system", "error", `Lead webhook hiba (${leadId}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return Response.json({ received: ids.length });
+  return Response.json({ received: items.length });
 }

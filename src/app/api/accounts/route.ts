@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   const { id } = (await req.json()) as { id?: string };
   const account = (await listAccounts()).find((a) => a.id === id);
   if (!account) return Response.json({ error: "Nincs ilyen fiók" }, { status: 404 });
-  await updateStore((d) => void (d.activeAccountId = account.id));
+  await updateStore((d) => void (d.activeAccountId = account.id), ["accounts", "ads", "leads", "company", "recipes"]);
   await logActivity("user", "action", `Fiók váltás: ${account.name}`);
   return Response.json(account);
 }

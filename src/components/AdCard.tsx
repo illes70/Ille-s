@@ -1,4 +1,9 @@
+"use client";
+
+import { useState } from "react";
+import { Play } from "lucide-react";
 import type { Ad } from "@/lib/types";
+import { LiveNumber } from "./live/LiveNumber";
 import type { Totals } from "@/lib/analytics";
 import { fmtMoney, fmtNum } from "@/lib/format";
 
@@ -36,11 +41,30 @@ export function Badge({ h, className = "" }: { h: Health; className?: string }) 
 
 export function CreativePreview({ ad, className = "", large = false }: { ad: Ad; className?: string; large?: boolean }) {
   const [a, b] = ad.creative.palette ?? ["#334155", "#0f172a"];
+  const [broken, setBroken] = useState(false);
+  const src = broken ? undefined : ad.creative.imageUrl;
   return (
-    <div className={`relative overflow-hidden ${large ? "aspect-[4/5]" : "aspect-square"} ${className}`}>
-      {ad.creative.imageUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={ad.creative.imageUrl} alt={ad.creative.headline} className="size-full object-cover" loading="lazy" />
+    <div className={`relative overflow-hidden bg-surface-2 ${large ? "aspect-[4/5]" : "aspect-square"} ${className}`}>
+      {src ? (
+        <>
+          {/* the whole creative is visible (contain); a blurred copy fills the frame */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt="" aria-hidden className="absolute inset-0 size-full scale-110 object-cover opacity-60 blur-2xl" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={ad.creative.headline}
+            className="relative size-full object-contain"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setBroken(true)}
+          />
+          {ad.creative.isVideo && (
+            <span className="absolute right-3 bottom-3 grid size-9 place-items-center rounded-full bg-black/60 text-white backdrop-blur">
+              <Play size={15} fill="currentColor" />
+            </span>
+          )}
+        </>
       ) : (
         <div
           className={`flex size-full flex-col justify-end text-white ${large ? "p-8" : "p-5"}`}
@@ -81,8 +105,8 @@ export function AdCard({ ad, t, targetCpl, freqLimit, currency, onOpen }: Props)
           <p className="truncate text-xs text-muted">{ad.creative.headline}</p>
         </div>
         <dl className="tabular grid grid-cols-3 gap-x-2 gap-y-3 border-t border-line pt-3 text-[13px]">
-          <Stat label="Költés" value={fmtMoney(t.spend, currency)} />
-          <Stat label="Lead" value={fmtNum(t.leads)} />
+          <Stat label="Költés" value={<LiveNumber value={t.spend} format={(n) => fmtMoney(n, currency)} />} />
+          <Stat label="Lead" value={<LiveNumber value={t.leads} format={(n) => fmtNum(Math.round(n))} />} />
           <Stat
             label="CPL"
             value={t.cpl === null ? "–" : fmtMoney(t.cpl, currency)}
@@ -102,7 +126,7 @@ export function AdCard({ ad, t, targetCpl, freqLimit, currency, onOpen }: Props)
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "good" | "bad" }) {
+function Stat({ label, value, tone }: { label: string; value: React.ReactNode; tone?: "good" | "bad" }) {
   return (
     <div className="min-w-0">
       <dt className="text-[11px] text-muted">{label}</dt>

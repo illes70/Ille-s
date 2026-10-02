@@ -7,7 +7,7 @@ import { ScanButton } from "@/components/ScanButton";
 import { usePoll } from "@/components/usePoll";
 
 export default function InboxPage() {
-  const proposals = usePoll<Proposal[]>("/api/proposals", 8000);
+  const proposals = usePoll<Proposal[]>("/api/proposals");
   const pending = proposals?.filter((p) => p.status === "pending") ?? [];
   const done = proposals?.filter((p) => p.status !== "pending") ?? [];
 

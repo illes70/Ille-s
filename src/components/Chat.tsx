@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUp, Check, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
-import type { ChatTurnEvent } from "@/lib/types";
-import { refreshAll } from "./usePoll";
+import { ArrowUp, Check, ImagePlus, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import type { ChatTurnEvent, LiveKey, MediaItem } from "@/lib/types";
+import { refreshAll, usePoll } from "./usePoll";
 
 interface Step {
   label: string;
@@ -14,32 +14,66 @@ interface Step {
 interface Msg {
   role: "user" | "assistant";
   text: string;
+  images?: string[];
   steps?: Step[];
   error?: string;
 }
+
+type Transcript = { role: Msg["role"]; text: string; images?: string[]; tools?: string[] }[];
 
 const SUGGESTIONS = [
   "Mi történt az elmúlt 7 napban? Mit csinálnál ma?",
   "Melyik hirdetést állítanád le és miért?",
   "Csinálj 5 új variánst a legjobb hirdetés alapján, töltsd fel szüneteltetve.",
+  "Készíts egy zöld dobozos hirdetésképet a cégprofil alapján.",
   "Készíts egy rövid instant formot felméréskéréshez.",
+  "Valami nem működik – nézd meg a rendszerállapotot.",
 ];
 
 export function Chat() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const company = usePoll<{ company: { name: string } }>("/api/company");
 
+  // each company has its own conversation: reload it when the account changes
   useEffect(() => {
-    fetch("/api/chat")
-      .then((r) => r.json())
-      .then((t: { role: Msg["role"]; text: string; tools?: string[] }[]) =>
-        setMsgs(t.map((m) => ({ role: m.role, text: m.text, steps: m.tools?.map((label) => ({ label, state: "ok" as const })) }))),
-      )
-      .catch(() => undefined);
+    const load = () =>
+      fetch("/api/chat")
+        .then((r) => r.json())
+        .then((t: Transcript) =>
+          setMsgs(t.map((m) => ({ role: m.role, text: m.text, images: m.images, steps: m.tools?.map((label) => ({ label, state: "ok" as const })) }))),
+        )
+        .catch(() => undefined);
+    load();
+    const onInvalidate = (e: Event) => (e as CustomEvent<LiveKey[]>).detail.includes("accounts") && !busyRef.current && load();
+    window.addEventListener("ocp:invalidate", onInvalidate);
+    return () => window.removeEventListener("ocp:invalidate", onInvalidate);
   }, []);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+
+  async function upload(files: FileList | File[]) {
+    const images = [...files].filter((f) => f.type.startsWith("image/")).slice(0, 6);
+    if (!images.length) return;
+    setUploading(true);
+    for (const f of images) {
+      const body = new FormData();
+      body.append("file", f);
+      const res = await fetch("/api/media", { method: "POST", body });
+      const item = (await res.json()) as MediaItem & { error?: string };
+      if (res.ok) setAttachments((a) => [...a, item.url].slice(0, 6));
+      else alert(item.error ?? "Feltöltési hiba");
+    }
+    setUploading(false);
+    taRef.current?.focus();
+  }
 
   // ?q=… prefills the input (used by "Kérdezd az asszisztenst" buttons)
   useEffect(() => {
@@ -59,16 +93,18 @@ export function Chat() {
 
   async function send(text: string) {
     const message = text.trim();
-    if (!message || busy) return;
+    const images = attachments;
+    if ((!message && !images.length) || busy || uploading) return;
     setInput("");
+    setAttachments([]);
     setBusy(true);
-    setMsgs((m) => [...m, { role: "user", text: message }, { role: "assistant", text: "", steps: [] }]);
+    setMsgs((m) => [...m, { role: "user", text: message, images }, { role: "assistant", text: "", steps: [] }]);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, images }),
       });
       if (!res.body) throw new Error("Nincs válasz a szervertől.");
       const reader = res.body.getReader();
@@ -117,11 +153,30 @@ export function Chat() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      onDragOver={(e) => {
+        if ([...e.dataTransfer.types].includes("Files")) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragging(false);
+        void upload(e.dataTransfer.files);
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-accent-soft/80 text-sm font-medium text-accent">
+          Engedd el a képet a csatoláshoz
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto px-4 md:px-8">
         <div className="mx-auto max-w-3xl py-6">
           {msgs.length === 0 ? (
-            <Welcome onPick={send} />
+            <Welcome onPick={send} company={company?.company.name} />
           ) : (
             <div className="space-y-6">
               {msgs.map((m, i) => (
@@ -135,12 +190,40 @@ export function Chat() {
 
       <div className="border-t border-line bg-bg/80 px-4 py-3 backdrop-blur md:px-8">
         <form
-          className="card mx-auto flex max-w-3xl items-end gap-2 p-2 shadow-sm"
+          className="card mx-auto max-w-3xl p-2 shadow-sm"
           onSubmit={(e) => {
             e.preventDefault();
             send(input);
           }}
         >
+          {(attachments.length > 0 || uploading) && (
+            <div className="flex flex-wrap gap-2 px-1 pt-1 pb-2">
+              {attachments.map((url) => (
+                <div key={url} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="" className="size-16 rounded-lg border border-line object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((a) => a.filter((x) => x !== url))}
+                    className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-fg text-bg"
+                    aria-label="Eltávolítás"
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              {uploading && (
+                <div className="grid size-16 place-items-center rounded-lg border border-dashed border-line">
+                  <Loader2 size={16} className="animate-spin text-muted" />
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
+          <button type="button" onClick={() => fileRef.current?.click()} title="Kép csatolása" className="rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-fg">
+            <ImagePlus size={18} />
+          </button>
           <textarea
             ref={taRef}
             rows={1}
@@ -156,7 +239,14 @@ export function Chat() {
                 send(input);
               }
             }}
-            placeholder="Írd le, mit csináljak…"
+            onPaste={(e) => {
+              const files = [...e.clipboardData.files];
+              if (files.length) {
+                e.preventDefault();
+                void upload(files);
+              }
+            }}
+            placeholder={company ? `Mit csináljak a(z) ${company.company.name} hirdetéseivel?` : "Írd le, mit csináljak…"}
             className="max-h-[200px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted"
           />
           {msgs.length > 0 && !busy && (
@@ -166,28 +256,29 @@ export function Chat() {
           )}
           <button
             type="submit"
-            disabled={busy || !input.trim()}
+            disabled={busy || uploading || (!input.trim() && !attachments.length)}
             className="grid size-9 place-items-center rounded-lg bg-fg text-bg transition-opacity disabled:opacity-30"
             aria-label="Küldés"
           >
             {busy ? <Loader2 size={18} className="animate-spin" /> : <ArrowUp size={18} />}
           </button>
+          </div>
         </form>
       </div>
     </div>
   );
 }
 
-function Welcome({ onPick }: { onPick: (t: string) => void }) {
+function Welcome({ onPick, company }: { onPick: (t: string) => void; company?: string }) {
   return (
     <div className="pt-10 md:pt-20">
       <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent">
-        <Sparkles size={13} /> Az asszisztensed figyel
+        <Sparkles size={13} /> {company ? `${company} · az asszisztensed figyel` : "Az asszisztensed figyel"}
       </div>
       <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Miben segíthetek ma?</h1>
       <p className="mt-2 max-w-xl text-muted">
-        Hirdetések, szövegek, büdzsé, instant formok, leadek: írd le, mit szeretnél, és megcsinálom. Ha valamit magamtól
-        javaslok, az a Javaslatok fülre kerül, ott jóváhagyhatod.
+        Hirdetések, szövegek, képek, büdzsé, instant formok, leadek: írd le, mit szeretnél, és megcsinálom. Képet is
+        behúzhatsz vagy beilleszthetsz. Ha valamit magamtól javaslok, az a Javaslatok fülre kerül.
       </p>
       <div className="mt-8 grid gap-2 sm:grid-cols-2">
         {SUGGESTIONS.map((s) => (
@@ -208,7 +299,19 @@ function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-fg px-4 py-2.5 text-[15px] whitespace-pre-wrap text-bg">{m.text}</div>
+        <div className="flex max-w-[85%] flex-col items-end gap-2">
+          {!!m.images?.length && (
+            <div className="flex flex-wrap justify-end gap-2">
+              {m.images.map((url) => (
+                <a key={url} href={url} target="_blank" rel="noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt="" className="max-h-48 rounded-xl border border-line object-cover" />
+                </a>
+              ))}
+            </div>
+          )}
+          {m.text && <div className="rounded-2xl rounded-br-md bg-fg px-4 py-2.5 text-[15px] whitespace-pre-wrap text-bg">{m.text}</div>}
+        </div>
       </div>
     );
   }
@@ -231,7 +334,25 @@ function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
         )}
         {m.text ? (
           <div className="prose-ocp text-[15px] leading-relaxed">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                img: ({ src, alt }) =>
+                  typeof src === "string" ? (
+                    <a href={src} target="_blank" rel="noreferrer" className="inline-block">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt={alt ?? ""} className="my-1 max-h-[420px] rounded-xl border border-line" />
+                    </a>
+                  ) : null,
+                a: ({ href, children }) => (
+                  <a href={href} target={href?.startsWith("/") ? undefined : "_blank"} rel="noreferrer">
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {m.text}
+            </ReactMarkdown>
           </div>
         ) : (
           streaming && !m.steps?.length && <Loader2 size={16} className="animate-spin text-muted" />

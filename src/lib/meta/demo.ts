@@ -1,7 +1,7 @@
 import "server-only";
 import type { Ad, AdAccount, AdStatus } from "../types";
 import { newId, readStore, updateStore } from "../store";
-import type { AdsProvider, LeadFormInput, NewAdInput } from "./provider";
+import type { AdsProvider, CreativeUpdate, LeadFormInput, NewAdInput } from "./provider";
 
 const PALETTES: [string, string][] = [
   ["#0ea5e9", "#1e3a8a"],
@@ -75,6 +75,16 @@ export class DemoProvider implements AdsProvider {
       };
       d.ads.unshift(ad);
       return { id: ad.id };
+    });
+  }
+
+  async updateAdCreative(adId: string, change: CreativeUpdate) {
+    await updateStore((d) => {
+      const ad = d.ads.find((a) => a.id === adId);
+      if (!ad) throw new Error(`Nincs ilyen hirdetés: ${adId}`);
+      if (change.headline !== undefined) ad.creative.headline = change.headline;
+      if (change.primaryText !== undefined) ad.creative.primaryText = change.primaryText;
+      if (change.imageUrl) ad.creative.imageUrl = change.imageUrl;
     });
   }
 

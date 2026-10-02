@@ -8,7 +8,7 @@ import { usePoll } from "./usePoll";
 const ICON = { agent: Bot, user: User, system: Cog };
 
 export function ActivityFeed({ limit = 30 }: { limit?: number }) {
-  const items = usePoll<Activity[]>("/api/activity", 3000);
+  const items = usePoll<Activity[]>("/api/activity");
   if (!items) return <p className="text-sm text-muted">Betöltés…</p>;
   if (!items.length)
     return <p className="text-sm text-muted">Még nincs esemény. Írj az asszisztensnek, vagy futtass egy átvizsgálást.</p>;
@@ -18,7 +18,7 @@ export function ActivityFeed({ limit = 30 }: { limit?: number }) {
       {items.slice(0, limit).map((a) => {
         const Icon = a.kind === "error" ? CircleAlert : ICON[a.actor];
         return (
-          <li key={a.id} className="relative flex gap-3">
+          <li key={a.id} className="fade-in relative flex gap-3">
             <span
               className={`z-10 grid size-7 shrink-0 place-items-center rounded-full border border-line bg-surface ${
                 a.kind === "error" ? "text-bad" : a.actor === "agent" ? "text-accent" : "text-muted"

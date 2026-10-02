@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, MessageSquare, Pause, Play, X } from "lucide-react";
+import { ExternalLink, Loader2, MessageSquare, Pause, Play, X } from "lucide-react";
+import { adsManagerUrl } from "@/lib/links";
 import type { Ad } from "@/lib/types";
 import { adTotals, series, type SeriesMetric } from "@/lib/analytics";
 import { fmtMoney, fmtNum } from "@/lib/format";
@@ -131,6 +132,16 @@ export function AdDrawer({ ad, from, rangeLabel, currency, targetCpl, freqLimit,
               <Link href={`/?q=${ask}`} className="inline-flex items-center gap-2 rounded-xl bg-fg px-4 py-2 text-sm font-semibold text-bg">
                 <MessageSquare size={15} /> Kérdezd az asszisztenst
               </Link>
+              {!ad.accountId.startsWith("act_demo") && (
+                <a
+                  href={adsManagerUrl(ad.accountId, ad.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-sm font-medium text-muted hover:text-fg"
+                >
+                  <ExternalLink size={15} /> Ads Manager
+                </a>
+              )}
             </div>
           </div>
         </div>
