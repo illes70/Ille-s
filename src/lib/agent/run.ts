@@ -10,9 +10,11 @@ import { clientTools, runTool, serverTools, toolLabel } from "./tools";
 
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
 
-const MODEL = process.env.OCP_MODEL ?? "claude-opus-5-5";
-const EFFORT = (process.env.OCP_EFFORT ?? "medium") as "low" | "medium" | "high";
 const MAX_STEPS = 25;
+
+// Server-side compaction keeps long company chats cheap (old turns get summarized
+// instead of being resent forever). If the API ever rejects it, run without it.
+const g = globalThis as unknown as { __ocpNoCompaction?: boolean };
 
 const client = new Anthropic();
 
@@ -43,8 +45,19 @@ export async function runAgentTurn(userText: string, images: string[], emit: (e:
     await updateStore((d) => void (d.chats[accountId] = [...(d.chats[accountId] ?? []), ...msgs]));
   };
 
+  const { effectiveAi, modelFor, recordClaude } = await import("../ai-usage");
+  const ai = await effectiveAi();
+  if (ai.blocked) {
+    emit({ type: "error", text: "A havi AI-keret elfogyott – a Beállítások → AI és költségek alatt emelheted, vagy válthatsz takarékos módra." });
+    emit({ type: "done" });
+    return;
+  }
+  // one model per conversation turn (thinking blocks and the cache are model-bound)
+  const { model: MODEL, effort: EFFORT } = modelFor(ai.mode);
+
   let jsonRetries = 0;
   for (let step = 0; step < MAX_STEPS; step++) {
+    const compaction = !g.__ocpNoCompaction;
     const stream = client.beta.messages.stream({
       model: MODEL,
       max_tokens: 64000,
@@ -55,7 +68,8 @@ export async function runAgentTurn(userText: string, images: string[], emit: (e:
       output_config: { effort: EFFORT },
       cache_control: { type: "ephemeral" },
       fallbacks: "default",
-      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18"],
+      ...(compaction ? { context_management: { edits: [{ type: "compact_20260112" as const }] } } : {}),
+      betas: ["server-side-fallback-2026-07-01", "thinking-display-updates-2026-08-18", ...(compaction ? ["compact-2026-01-12" as const] : [])],
     });
     stream.on("text", (delta) => emit({ type: "text", text: delta }));
     stream.on("thinking", (delta) => delta && emit({ type: "tool_start", label: delta.trim() }));
@@ -65,10 +79,16 @@ export async function runAgentTurn(userText: string, images: string[], emit: (e:
       message = await stream.finalMessage();
       jsonRetries = 0;
     } catch (err) {
+      if (compaction && err instanceof Anthropic.BadRequestError && /compact|context_management/i.test(err.message)) {
+        console.warn("[ocp chat] compaction rejected, continuing without it:", err.message);
+        g.__ocpNoCompaction = true;
+        continue;
+      }
       // Only an unparseable streamed tool input is retried; API errors bubble up.
       if (err instanceof Anthropic.APIError || jsonRetries++ >= 2) throw err;
       continue;
     }
+    await recordClaude("chat", message.model ?? MODEL, message.usage).catch((e) => console.error("[ocp usage]", e));
 
     if (message.stop_reason === "refusal") {
       emit({ type: "error", text: "Ezt a kérést a modell nem tudta teljesíteni." });

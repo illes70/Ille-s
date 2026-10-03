@@ -96,9 +96,13 @@ export async function writeBrief(ov: Overview, firstName?: string): Promise<Brie
 
 async function aiWording(facts: Record<string, unknown>): Promise<string | null> {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) return null;
+  const { effectiveAi, modelFor, recordClaude } = await import("../ai-usage");
+  const ai = await effectiveAi();
+  if (ai.blocked) return null; // the template version is free
+  const model = modelFor(ai.mode).model;
   const client = new Anthropic();
   const msg = await client.beta.messages.create({
-    model: process.env.OCP_MODEL ?? "claude-opus-5-5",
+    model,
     max_tokens: 1500,
     output_config: { effort: "low" },
     system:
@@ -109,6 +113,7 @@ async function aiWording(facts: Record<string, unknown>): Promise<string | null>
     fallbacks: "default",
     betas: ["server-side-fallback-2026-07-01"],
   });
+  await recordClaude("brief", msg.model ?? model, msg.usage).catch(() => undefined);
   const text = msg.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("").trim();
   return text || null;
 }

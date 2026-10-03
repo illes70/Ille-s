@@ -75,14 +75,17 @@ export interface StoreData {
     /** local date of the last "token expires soon" warning */
     tokenWarnedOn?: string;
   };
+  /** AI spend per month ("2026-10" → totals) */
+  usage?: Record<string, import("./ai-usage").MonthUsage>;
   /** who allowed OCP to pull in the leads of every page, and when (GDPR record) */
   leadConsent?: { userId: string; userName: string; at: string; pageIds: string[] };
 }
 
 /** Settings with every newer field filled in (stores written by older versions lack them). */
-export function settingsWithDefaults(s: Settings): Required<Pick<Settings, "schedule" | "notify">> & Settings {
+export function settingsWithDefaults(s: Settings): Required<Pick<Settings, "schedule" | "notify" | "ai">> & Settings {
   return {
     ...s,
+    ai: { mode: "max", monthlyBudgetUsd: 20, onLimit: "saver", imageTier: "standard", ...s.ai },
     schedule: { scanEveryMinutes: 60, briefEnabled: true, briefTime: "07:30", timezone: "Europe/Budapest", ...s.schedule },
     notify: { leadsEmail: true, leadsPush: true, briefEmail: true, briefPush: true, alertsEmail: true, alertsPush: true, ...s.notify },
   };

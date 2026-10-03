@@ -22,6 +22,8 @@ AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli hel
 
 **Visszavonás egy kattintással:** a Robot élőben oldalon minden státusz- és büdzséváltoztatás (asszisztens, robotpilóta, költési plafon, te) visszavonható.
 
+**AI képek három szinten, költségkerettel:** *Ingyenes* (FLUX a Cloudflare napi ingyenes keretéből – vázlat, háttér), *Erős* (Google Gemini „Nano Banana”, ~0,04 $/kép, valódi munkafotót is feljavít), *Prémium* (OpenAI GPT Image magas minőség – a ChatGPT képmodellje, ~0,2 $/kép). Az asszisztens ingyenes vázlatokkal ötletel, és csak a kiválasztott végleges képet készíti erősben; ugyanaz a kérés másodszorra a képtárból jön (nem kerül pénzbe); a pontos szöveg a képen mindig ingyenes sablon. **Beállítások → AI és költségek:** havi költés élőben (chat, összefoglaló, képek), asszisztens mód (Maximális / Kiegyensúlyozott / Takarékos), havi keret 80%-os figyelmeztetéssel, kereten túl takarékos mód vagy leállás. A hosszú cégenkénti chatet a szerver automatikusan tömöríti, így nem drágul a beszélgetés hosszával.
+
 **Adatvédelem:** nyilvános adatkezelési tájékoztató (`/privacy`, a Meta App Review-hoz is kell), lead-engedély naplózva (ki, mikor), visszavonható, fiók és minden adat törölhető.
 
 ### v0.5

@@ -5,9 +5,9 @@ import { Bell, BellRing, Check, Clock, Copy, Loader2, Smartphone, Trash2, UserPl
 import type { Settings } from "@/lib/types";
 import { usePoll, usePollWithRefresh } from "./usePoll";
 
-type Full = Settings & Required<Pick<Settings, "schedule" | "notify">>;
+type Full = Settings & Required<Pick<Settings, "schedule" | "notify" | "ai">>;
 
-function useSettingsPart<K extends "schedule" | "notify">(key: K) {
+function useSettingsPart<K extends "schedule" | "notify" | "ai">(key: K) {
   const [remote, reload] = usePollWithRefresh<Full>("/api/settings");
   const [value, setValue] = useState<Full[K]>();
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
@@ -322,6 +322,112 @@ export function DangerCard() {
       <button onClick={del} disabled={confirm !== status.user.email} className="inline-flex items-center gap-2 rounded-xl bg-bad px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">
         <Trash2 size={15} /> Végleges törlés
       </button>
+    </section>
+  );
+}
+
+interface UsageResp {
+  month: string;
+  current: { usd: number; chatTurns: number; images: number; imagesFree: number; by: { chat: number; brief: number; images: number } };
+  budget: number;
+  history: { month: string; usd: number }[];
+  imageProviders: { id: string; label: string; tier: "free" | "standard" | "pro"; enabled: boolean; costUsd: number; canEdit: boolean }[];
+}
+
+const MODES = [
+  { id: "max", label: "Maximális", desc: "Claude Opus 5.5, alapos gondolkodás – a legjobb döntések." },
+  { id: "balanced", label: "Kiegyensúlyozott", desc: "Claude Opus 5.5, rövidebb gondolkodás – gyorsabb és olcsóbb." },
+  { id: "saver", label: "Takarékos", desc: "Claude Sonnet 5.5 (fele tokenár) + ingyenes képek – a legolcsóbb, mindennapi feladatokra." },
+] as const;
+const TIERS = [
+  { id: "free", label: "Ingyenes", desc: "FLUX (Cloudflare) – vázlat, háttér" },
+  { id: "standard", label: "Erős", desc: "Gemini „Nano Banana” – ~0,04 $/kép, valódi fotót is feljavít" },
+  { id: "pro", label: "Prémium", desc: "GPT Image magas minőség (ChatGPT) – ~0,2 $/kép" },
+] as const;
+
+/** Which models, how much per month, and what happens at the limit. */
+export function AiCard() {
+  const { value: ai, setValue, save, state, error } = useSettingsPart("ai");
+  const usage = usePoll<UsageResp>("/api/usage");
+  if (!ai || !usage) return <section id="ai" className="card p-6 text-sm text-muted">Betöltés…</section>;
+  const set = (patch: Partial<typeof ai>) => setValue({ ...ai, ...patch });
+  const u = usage.current;
+  const pct = ai.monthlyBudgetUsd > 0 ? Math.min(100, (u.usd / ai.monthlyBudgetUsd) * 100) : 0;
+  const usd = (n: number) => `${n < 10 ? n.toFixed(2) : n.toFixed(0)} $`;
+  const tierOn = (t: string) => usage.imageProviders.some((p) => p.tier === t && p.enabled);
+
+  return (
+    <section id="ai" className="card space-y-5 p-6">
+      <h2 className="font-semibold">AI és költségek</h2>
+
+      <div>
+        <div className="mb-1.5 flex items-baseline justify-between text-[13px]">
+          <span className="text-muted">Ebben a hónapban</span>
+          <span className="tabular font-semibold">
+            {usd(u.usd)}
+            {ai.monthlyBudgetUsd > 0 && <span className="font-normal text-muted"> / {usd(ai.monthlyBudgetUsd)}</span>}
+          </span>
+        </div>
+        {ai.monthlyBudgetUsd > 0 && (
+          <div className="h-2 overflow-hidden rounded-full bg-surface-2">
+            <div className={`h-full rounded-full ${pct >= 100 ? "bg-bad" : pct >= 80 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        <p className="mt-1.5 text-xs text-muted">
+          Chat {usd(u.by.chat)} ({u.chatTurns} lépés) · reggeli összefoglaló {usd(u.by.brief)} · képek {usd(u.by.images)} ({u.images} kép, ebből {u.imagesFree} ingyenes) – becsült listaár
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[13px] text-muted">Asszisztens</p>
+        {MODES.map((m) => (
+          <label key={m.id} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${ai.mode === m.id ? "border-accent bg-accent-soft/50" : "border-line"}`}>
+            <input type="radio" name="aimode" checked={ai.mode === m.id} onChange={() => set({ mode: m.id })} className="mt-1 accent-[var(--accent)]" />
+            <span>
+              <span className="block text-sm font-medium">{m.label}</span>
+              <span className="block text-[13px] text-muted">{m.desc}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[13px] text-muted">Képek alapértelmezett minősége (az asszisztens a végleges képhez magától léphet feljebb)</p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {TIERS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => set({ imageTier: t.id })}
+              className={`rounded-xl border p-3 text-left ${ai.imageTier === t.id ? "border-accent bg-accent-soft/50" : "border-line"}`}
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <span className={`size-1.5 rounded-full ${tierOn(t.id) ? "bg-good" : "bg-line"}`} /> {t.label}
+              </span>
+              <span className="mt-0.5 block text-xs text-muted">{t.desc}</span>
+              {!tierOn(t.id) && <span className="mt-1 block text-[11px] text-warn">nincs bekapcsolva</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1.5 block text-[13px] text-muted">Havi AI-keret ($, 0 = nincs)</span>
+          <input className="input" type="number" min={0} value={ai.monthlyBudgetUsd} onChange={(e) => set({ monthlyBudgetUsd: Number(e.target.value) })} />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-[13px] text-muted">A keret elérésekor</span>
+          <select className="input" value={ai.onLimit} onChange={(e) => set({ onLimit: e.target.value as "saver" | "stop" })}>
+            <option value="saver">takarékos módra vált</option>
+            <option value="stop">megáll a hónap végéig</option>
+          </select>
+        </label>
+      </div>
+      {error && <p className="text-sm text-bad">{error}</p>}
+      <div className="flex justify-end">
+        <SaveButton state={state} onClick={() => save()} />
+      </div>
     </section>
   );
 }

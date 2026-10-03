@@ -471,13 +471,18 @@ const coreTools: ToolDef[] = [
   ),
   tool(
     "generate_photo",
-    "Új fotó generálása AI-jal (OpenAI, képenként fizetős – csak ha a felhasználó kéri, vagy nincs használható fotó). Szöveget NE kérj a képre: a szöveget utána a compose_ad_image teszi rá pontosan. Valósághű, helyi munkafotó-stílust kérj, ne stock-hatást.",
-    z.object({ prompt: z.string(), size: z.enum(["1024x1024", "1024x1536", "1536x1024"]).default("1024x1536") }),
-    () => "Fotó generálása",
-    async ({ prompt, size }) => {
-      const item = await generatePhoto(prompt, size, (await getProvider()).account.id);
-      await logActivity("agent", "create", `AI fotó generálva: ${item.url}`);
-      return withImage({ image_url: item.url }, item.url);
+    "Új fotó generálása vagy egy meglévő fotó feljavítása AI-jal. Minőség (tier): free = ingyenes (vázlat, háttér, ötletelés – ezzel kezdj, ha több variáns kell), standard = erős (~0,04 $), pro = a legerősebb, a ChatGPT-szintű (~0,13–0,21 $) – csak a végleges, kiválasztott képhez vagy ha a felhasználó kéri. Ha nem adod meg, a beállított alapértelmezés megy. reference_image_url: meglévő munkafotó, amit szebbé/ünnepibbé/tisztábbá teszel (valódi munka, nem kitalált!). Szöveget NE kérj a képre: utána a compose_ad_image teszi rá pontosan és ingyen. Valósághű, helyi munkafotó-stílust kérj, ne stock-hatást. A promptot angolul írd (jobb eredmény).",
+    z.object({
+      prompt: z.string(),
+      size: z.enum(["1024x1024", "1024x1536", "1536x1024"]).default("1024x1536"),
+      tier: z.enum(["free", "standard", "pro"]).optional(),
+      reference_image_url: z.string().optional(),
+    }),
+    (i) => `Fotó generálása${i.tier === "pro" ? " (prémium)" : i.tier === "free" ? " (ingyenes)" : ""}`,
+    async ({ prompt, size, tier, reference_image_url }) => {
+      const item = await generatePhoto(prompt, size, { accountId: (await getProvider()).account.id, tier, referenceUrl: reference_image_url });
+      await logActivity("agent", "create", `AI fotó ${item.reused ? "(korábbi, újrahasznosítva)" : "generálva"}: ${item.provider}${item.costUsd ? ` · ~${item.costUsd.toFixed(2)} $` : " · ingyenes"}`);
+      return withImage({ image_url: item.url, provider: item.provider, cost_usd: item.costUsd, reused: !!item.reused }, item.url);
     },
   ),
   tool(

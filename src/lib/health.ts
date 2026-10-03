@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { readStore } from "./store";
 import { metaToken, graph, metaPages } from "./meta/graph";
 import { META_SCOPES, appCredentials } from "./meta/oauth";
+import { imageProviders } from "./creative/generate";
 
 export interface HealthCheck {
   id: string;
@@ -201,18 +202,23 @@ function finish(checks: HealthCheck[], origin: string) {
           },
   });
 
-  // 7) image generation (optional)
-  checks.push(
-    process.env.OPENAI_API_KEY
-      ? { id: "images", label: "AI képgenerálás", status: "ok", detail: `OpenAI · ${process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1"}` }
+  // 7) image generation (optional): which tiers are on
+  const on = imageProviders().filter((p) => p.enabled);
+  const tiers = new Set(on.map((p) => p.tier));
+  checks.push({
+    id: "images",
+    label: "AI képgenerálás",
+    status: tiers.size ? "ok" : "warn",
+    detail: tiers.size
+      ? `Bekapcsolva: ${on.map((p) => p.label).join(" · ")}`
+      : "Kikapcsolva. A sablonos képek (pontos szöveg a fotón) ingyen működnek nélküle is.",
+    fix: tiers.has("free")
+      ? undefined
       : {
-          id: "images",
-          label: "AI képgenerálás",
-          status: "warn",
-          detail: "Kikapcsolva. A sablonos képek (pontos szöveg a fotón) ingyen működnek nélküle is.",
-          fix: { text: "platform.openai.com → API keys → OPENAI_API_KEY a .env.local-ba (képenként fizetős, az ingyenes ChatGPT-nek nincs API-ja).", href: "https://platform.openai.com/api-keys" },
+          text: "Ingyenes képekhez: dash.cloudflare.com → Workers AI → API token (Workers AI jogosultság) → CF_ACCOUNT_ID + CF_API_TOKEN. Erős képekhez: aistudio.google.com → API key → GEMINI_API_KEY. ChatGPT-szintű prémiumhoz: OPENAI_API_KEY.",
+          href: "https://dash.cloudflare.com/?to=/:account/ai/workers-ai",
         },
-  );
+  });
   return checks;
 }
 

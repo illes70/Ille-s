@@ -269,6 +269,17 @@ export interface Settings {
     briefTime: string;
     timezone: string;
   };
+  /** AI models and the monthly AI spend limit */
+  ai?: {
+    /** max: Opus, thorough · balanced: Opus, quicker · saver: Sonnet, cheapest */
+    mode: "max" | "balanced" | "saver";
+    /** USD per month, 0 = no limit */
+    monthlyBudgetUsd: number;
+    /** over the limit: keep working in saver mode, or stop AI work until next month */
+    onLimit: "saver" | "stop";
+    /** image quality the assistant uses by default */
+    imageTier: "free" | "standard" | "pro";
+  };
   /** where OCP reaches you */
   notify?: {
     email?: string;

@@ -6,7 +6,7 @@ import { FacebookIcon } from "@/components/FacebookIcon";
 import type { AutopilotLevel, Settings } from "@/lib/types";
 import { Page, PageHeader } from "@/components/PageHeader";
 import { usePoll, usePollWithRefresh, refreshAll } from "@/components/usePoll";
-import { DangerCard, InviteCard, NotifyCard, ScheduleCard } from "@/components/SettingsCards";
+import { AiCard, DangerCard, InviteCard, NotifyCard, ScheduleCard } from "@/components/SettingsCards";
 import { LeadConsentStatus } from "@/components/LeadConsent";
 
 const LEVELS: { id: AutopilotLevel; label: string; desc: (ap: Settings["autopilot"]) => string }[] = [
@@ -73,6 +73,7 @@ export default function SettingsPage() {
         </div>
         <div className="space-y-6">
           <HealthCard />
+          <AiCard />
           <ScheduleCard />
           <InviteCard />
           <DangerCard />
