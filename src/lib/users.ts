@@ -46,9 +46,16 @@ async function migrateSingleTenant(): Promise<UsersFile> {
 
 async function load(): Promise<UsersFile> {
   if (state.cache) return state.cache;
+  let raw: string | null = null;
   try {
-    state.cache = JSON.parse(await fs.readFile(FILE, "utf8")) as UsersFile;
-  } catch {
+    raw = await fs.readFile(FILE, "utf8");
+  } catch (err) {
+    // only a missing file means "fresh install"; any other error must not reset the user list
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (raw !== null) {
+    state.cache = JSON.parse(raw) as UsersFile;
+  } else {
     state.cache = await migrateSingleTenant();
     if (state.cache.users.length) await write(state.cache);
   }

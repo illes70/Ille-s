@@ -116,8 +116,12 @@ export async function notify(kind: NotifyKind, msg: Message): Promise<{ push: nu
     const wantPush = kind === "lead" ? n.leadsPush : kind === "brief" ? n.briefPush : n.alertsPush;
     const wantEmail = kind === "lead" ? n.leadsEmail : kind === "brief" ? n.briefEmail : n.alertsEmail;
     const email = n.email ?? (await ownerEmail());
+    const t = await currentTenant();
+    const { listUsers, tenantOf } = await import("./users");
+    const members = new Set((await listUsers()).filter((u) => tenantOf(u) === t).map((u) => u.id));
+    const subs = (store.pushSubs ?? []).filter((s) => members.has(s.userId));
     const [push, mailed] = await Promise.all([
-      wantPush ? sendPush(store.pushSubs ?? [], msg) : 0,
+      wantPush ? sendPush(subs, msg) : 0,
       wantEmail && email ? sendEmail(email, msg) : false,
     ]);
     return { push, email: mailed };
