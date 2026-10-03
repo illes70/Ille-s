@@ -1,6 +1,7 @@
 import "server-only";
 import type { MetaAuth, MetaPage } from "../types";
 import { GRAPH_VERSION, all, graph } from "./graph";
+import { readStore } from "../store";
 
 // One-click connect: Facebook Login → long-lived token → pages + leadgen webhook subscription.
 
@@ -24,13 +25,24 @@ export function appCredentials() {
 
 export const redirectUri = (origin: string) => `${process.env.OCP_PUBLIC_URL ?? origin}/api/auth/meta/callback`;
 
+/**
+ * Facebook Login for Business when META_CONFIG_ID is set (recommended: the permissions
+ * and asset picker are configured once in the Meta app, the customer just clicks
+ * "Continue"), else classic Facebook Login with the scope list.
+ */
 export function loginUrl(origin: string, state: string) {
   const app = appCredentials()!;
   const u = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
   u.searchParams.set("client_id", app.id);
   u.searchParams.set("redirect_uri", redirectUri(origin));
   u.searchParams.set("state", state);
-  u.searchParams.set("scope", META_SCOPES.join(","));
+  u.searchParams.set("response_type", "code");
+  if (process.env.META_CONFIG_ID) {
+    u.searchParams.set("config_id", process.env.META_CONFIG_ID);
+    u.searchParams.set("override_default_response_type", "true");
+  } else {
+    u.searchParams.set("scope", META_SCOPES.join(","));
+  }
   return u.toString();
 }
 
@@ -41,23 +53,32 @@ export async function completeLogin(code: string, origin: string): Promise<MetaA
     noAuth: true,
     params: { client_id: app.id, client_secret: app.secret, redirect_uri: redirectUri(origin), code },
   });
+  // user tokens are swapped for a ~60 day one; a Login for Business system-user token
+  // doesn't expire and can't be swapped – then keep it as it is
   const long = await graph<{ access_token: string; expires_in?: number }>("oauth/access_token", {
     noAuth: true,
     params: { grant_type: "fb_exchange_token", client_id: app.id, client_secret: app.secret, fb_exchange_token: short.access_token },
-  });
+  }).catch(() => ({ access_token: short.access_token, expires_in: undefined }));
   const token = long.access_token;
+  const debug = await graph<{ data: { expires_at?: number; data_access_expires_at?: number } }>("debug_token", {
+    noAuth: true,
+    params: { input_token: token, access_token: `${app.id}|${app.secret}` },
+  }).catch(() => null);
+  const expiresAtSec = debug?.data.expires_at || (long.expires_in ? Math.floor(Date.now() / 1000) + long.expires_in : 0);
   const [me, perms, pages] = await Promise.all([
     graph<{ id: string; name: string }>("me", { token, params: { fields: "id,name" } }),
     graph<{ data: { permission: string; status: string }[] }>("me/permissions", { token }),
     all<{ id: string; name: string; access_token: string }>("me/accounts", { fields: "id,name,access_token", limit: "100" }, 500, token),
   ]);
-  const withSubs: MetaPage[] = [];
-  for (const p of pages) withSubs.push({ id: p.id, name: p.name, token: p.access_token, leadgenSubscribed: await subscribeLeadgen(p.id, p.access_token) });
+  // lead webhooks are switched on only after the user says yes to "pull in every lead?"
+  const previous = new Map((await readStore()).metaAuth?.pages.map((p) => [p.id, p.leadgenSubscribed]) ?? []);
+  const withSubs: MetaPage[] = pages.map((p) => ({ id: p.id, name: p.name, token: p.access_token, leadgenSubscribed: previous.get(p.id) ?? false }));
   return {
     userId: me.id,
     userName: me.name,
     token,
-    expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000).toISOString() : undefined,
+    // 0 = never expires (system-user token)
+    expiresAt: expiresAtSec ? new Date(expiresAtSec * 1000).toISOString() : undefined,
     scopes: perms.data.filter((x) => x.status === "granted").map((x) => x.permission),
     pages: withSubs,
     connectedAt: new Date().toISOString(),

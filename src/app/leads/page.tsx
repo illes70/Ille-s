@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, MapPin, Phone } from "lucide-react";
+import { Mail, MapPin, Phone, TriangleAlert } from "lucide-react";
 import type { Lead, LeadStatus } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 import { Page, PageHeader } from "@/components/PageHeader";
 import { usePollWithRefresh } from "@/components/usePoll";
+import { LeadConsentCard } from "@/components/LeadConsent";
 
 const STATUSES: { id: LeadStatus; label: string; cls: string }[] = [
   { id: "new", label: "Új", cls: "bg-accent-soft text-accent" },
@@ -16,7 +17,11 @@ const STATUSES: { id: LeadStatus; label: string; cls: string }[] = [
 ];
 
 export default function LeadsPage() {
-  const [leads, reload] = usePollWithRefresh<Lead[]>("/api/leads");
+  const [scope, setScope] = useState<"account" | "all">("account");
+  const [hideSpam, setHideSpam] = useState(true);
+  const [raw, reload] = usePollWithRefresh<Lead[]>(scope === "all" ? "/api/leads?scope=all" : "/api/leads");
+  const leads = raw && (hideSpam ? raw.filter((l) => l.quality?.verdict !== "spam") : raw);
+  const spamCount = (raw ?? []).filter((l) => l.quality?.verdict === "spam").length;
   const [filter, setFilter] = useState<LeadStatus | "all">("all");
   const shown = (leads ?? []).filter((l) => filter === "all" || l.status === filter);
 
@@ -28,6 +33,21 @@ export default function LeadsPage() {
   return (
     <Page>
       <PageHeader title="Leadek" sub="Az instant formokból érkező érdeklődők – a webhookkal másodpercek alatt itt vannak." />
+      <LeadConsentCard />
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-xl border border-line p-0.5 text-xs font-medium">
+          {(["account", "all"] as const).map((s) => (
+            <button key={s} onClick={() => setScope(s)} className={`rounded-lg px-3 py-1 ${scope === s ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              {s === "account" ? "Ez a fiók" : "Minden fiók"}
+            </button>
+          ))}
+        </div>
+        {spamCount > 0 && (
+          <button onClick={() => setHideSpam(!hideSpam)} className="text-xs text-muted hover:text-fg">
+            {hideSpam ? `${spamCount} szűrt spam megjelenítése` : "Spam elrejtése"}
+          </button>
+        )}
+      </div>
       <div className="mb-4 flex flex-wrap gap-1">
         <Chip on={filter === "all"} onClick={() => setFilter("all")}>
           Mind {leads ? `(${leads.length})` : ""}
@@ -53,6 +73,12 @@ export default function LeadsPage() {
                   <p className="text-xs text-muted">
                     {l.formName} · {timeAgo(l.createdAt)}
                   </p>
+                  {l.quality && l.quality.verdict !== "ok" && (
+                    <p className={`mt-1 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${l.quality.verdict === "spam" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
+                      <TriangleAlert size={11} /> {l.quality.verdict === "spam" ? "Spam: " : ""}
+                      {l.quality.flags.join(", ")}
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
                   {l.phone && (

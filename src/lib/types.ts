@@ -107,8 +107,40 @@ export interface Activity {
   id: string;
   ts: string;
   actor: ActivityActor;
-  kind: "scan" | "action" | "proposal" | "chat" | "create" | "error" | "lead";
+  kind: "scan" | "action" | "proposal" | "chat" | "create" | "error" | "lead" | "brief" | "guard";
   text: string;
+  /** how to take this change back with one click (status/budget changes) */
+  undo?: UndoAction;
+  undoneAt?: string;
+}
+
+/** Restores the state before a change: the previous status or budget of an object. */
+export type UndoAction =
+  | { type: "status"; level: "ad" | "adset" | "campaign"; id: string; accountId: string; status: AdStatus }
+  | { type: "budget"; level: "adset" | "campaign"; id: string; accountId: string; dailyBudget: number }
+  /** several ads at once (e.g. what the spend cap paused) */
+  | { type: "statuses"; accountId: string; items: { level: "ad" | "adset" | "campaign"; id: string; status: AdStatus }[] };
+
+/** The morning brief: what happened, and what to do today. */
+export interface Brief {
+  id: string;
+  /** local date it was written for (YYYY-MM-DD) */
+  date: string;
+  createdAt: string;
+  /** "Jó reggelt, …!" + short summary (AI-written when Claude is available) */
+  text: string;
+  totals: { yesterday: PeriodTotals; last7: PeriodTotals; newLeads: number };
+  todo: { text: string; proposalId?: string; accountId?: string; severity: "high" | "medium" | "low" }[];
+  readAt?: string;
+}
+
+/** Browser push subscription (Web Push API) of one device. */
+export interface PushSub {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  userId: string;
+  label?: string;
+  createdAt: string;
 }
 
 export type LeadStatus = "new" | "contacted" | "survey" | "won" | "lost";
@@ -125,6 +157,8 @@ export interface Lead {
   city?: string;
   note?: string;
   status: LeadStatus;
+  /** spam / duplicate check done on arrival */
+  quality?: { verdict: "ok" | "suspect" | "spam"; flags: string[]; duplicateOf?: string };
 }
 
 /** A proven ad format that can be reused for other offers/clients. */
@@ -158,6 +192,8 @@ export interface Company {
   brandVoice: string;
   /** overrides the global target cost per lead */
   targetCpl?: number;
+  /** hard daily spend cap of the ad account: over it OCP pauses every active campaign */
+  dailySpendCap?: number;
   /** Facebook Page that runs the ads and owns the lead forms */
   pageId?: string;
   /** Instagram business account the ads run with */
@@ -205,6 +241,8 @@ export interface User {
   name: string;
   passwordHash: string;
   role: "owner" | "member";
+  /** workspace this person works in (default: their own id) */
+  tenantId?: string;
   createdAt: string;
 }
 
@@ -222,6 +260,25 @@ export interface MediaItem {
 export type AutopilotLevel = "ask" | "bounded" | "full";
 
 export interface Settings {
+  /** background schedule (0-24 engine) */
+  schedule?: {
+    /** monitor scan of every account, minutes (0 = off) */
+    scanEveryMinutes: number;
+    briefEnabled: boolean;
+    /** local "HH:MM" */
+    briefTime: string;
+    timezone: string;
+  };
+  /** where OCP reaches you */
+  notify?: {
+    email?: string;
+    leadsEmail: boolean;
+    leadsPush: boolean;
+    briefEmail: boolean;
+    briefPush: boolean;
+    alertsEmail: boolean;
+    alertsPush: boolean;
+  };
   currency: string;
   /** default target cost per lead (a company can override it) */
   targetCpl: number;
@@ -252,6 +309,7 @@ export interface PeriodTotals {
 export interface AccountSummary {
   accountId: string;
   today: PeriodTotals;
+  yesterday?: PeriodTotals;
   last7: PeriodTotals;
   activeAds: number;
   error?: string;
@@ -272,7 +330,7 @@ export type LiveEvent =
   | { type: "account"; account: AdAccount }
   | { type: "hello"; at: string };
 
-export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview";
+export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview" | "brief" | "settings";
 
 export interface ChatTurnEvent {
   type: "text" | "tool_start" | "tool_end" | "error" | "done";

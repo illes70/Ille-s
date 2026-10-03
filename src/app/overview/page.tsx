@@ -9,6 +9,7 @@ import { Page } from "@/components/PageHeader";
 import { LiveNumber } from "@/components/live/LiveNumber";
 import { FacebookIcon } from "@/components/FacebookIcon";
 import { refreshAll, usePoll, usePollWithRefresh } from "@/components/usePoll";
+import { LeadConsentModal } from "@/components/LeadConsent";
 
 interface Pending {
   id: string;
@@ -45,10 +46,14 @@ export default function OverviewPage() {
   const [q, setQ] = useState("");
   const [flag, setFlag] = useState<"connected" | "welcome" | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  const [askLeads, setAskLeads] = useState(false);
 
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
-    if (p.has("connected")) setFlag("connected");
+    if (p.has("connected")) {
+      setFlag("connected");
+      setAskLeads(true);
+    }
     else if (p.has("welcome")) setFlag("welcome");
     if (p.size) window.history.replaceState(null, "", "/overview");
     const onSync = (e: Event) => setSync((e as CustomEvent<SyncState>).detail);
@@ -97,6 +102,7 @@ export default function OverviewPage() {
         )}
       </header>
 
+      {askLeads && <LeadConsentModal onClose={() => setAskLeads(false)} />}
       {flag === "connected" && (
         <p className="fade-in mb-5 flex items-center gap-2 rounded-xl bg-good-soft px-4 py-3 text-sm text-good">
           <CheckCircle2 size={16} /> Facebook csatlakoztatva – minden fiókod itt van, a hirdetések és képek most töltődnek.

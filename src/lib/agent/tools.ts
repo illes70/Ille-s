@@ -91,10 +91,16 @@ const coreTools: ToolDef[] = [
           const { updateObject } = await import("../meta/manage");
           await updateObject(id, { status });
           const { adsChanged } = await import("../live-bus");
-          adsChanged(provider.account.id);
+          await adsChanged(provider.account.id);
         }
       }
-      await logActivity("agent", "action", `${status === "PAUSED" ? "Leállítva" : "Elindítva"} (${level}): ${id} – ${reason}`);
+      await logActivity("agent", "action", `${status === "PAUSED" ? "Leállítva" : "Elindítva"} (${level}): ${id} – ${reason}`, {
+        type: "status",
+        level,
+        id,
+        accountId: provider.account.id,
+        status: status === "PAUSED" ? "ACTIVE" : "PAUSED",
+      });
       return { ok: true };
     },
   ),
@@ -141,9 +147,15 @@ const coreTools: ToolDef[] = [
         const { updateObject, toMinor } = await import("../meta/manage");
         await updateObject(id, { daily_budget: toMinor(daily_budget) });
         const { adsChanged } = await import("../live-bus");
-        adsChanged(provider.account.id);
+        await adsChanged(provider.account.id);
       }
-      await logActivity("agent", "action", `Büdzsé (${level}) ${id}: ${current} → ${daily_budget} (${reason})`);
+      await logActivity("agent", "action", `Büdzsé (${level}) ${id}: ${current} → ${daily_budget} (${reason})`, {
+        type: "budget",
+        level,
+        id: level === "adset" || provider.mode === "meta" ? id : sample!.adsetId,
+        accountId: provider.account.id,
+        dailyBudget: current,
+      });
       return { ok: true, previous: current, now: daily_budget };
     },
   ),
@@ -379,12 +391,18 @@ const coreTools: ToolDef[] = [
       usp: z.string().optional(),
       brandVoice: z.string().optional(),
       targetCpl: z.number().positive().optional(),
+      daily_spend_cap: z
+        .number()
+        .positive()
+        .optional()
+        .describe("napi költési plafon a fiók pénznemében: felette az OCP minden aktív hirdetést leállít (biztonsági fék)"),
       notes: z.string().optional(),
     }),
     () => "Cégprofil frissítése",
     async (patch) => {
       const accountId = (await getProvider()).account.id;
-      const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+      const { daily_spend_cap, ...rest } = patch;
+      const clean = Object.fromEntries(Object.entries({ ...rest, dailySpendCap: daily_spend_cap }).filter(([, v]) => v !== undefined));
       const c = await saveCompany({ ...clean, accountId });
       await logActivity("agent", "action", `Cégprofil frissítve: ${Object.keys(clean).join(", ")}`);
       return c;

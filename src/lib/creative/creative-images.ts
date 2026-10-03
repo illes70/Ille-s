@@ -1,7 +1,8 @@
 import "server-only";
 import { promises as fs } from "fs";
 import path from "path";
-import { DATA_DIR } from "../store";
+import { dataDir } from "../store";
+import { currentTenant } from "../tenant";
 
 // Ad creative images, cached on our side. Meta's image links (fbcdn) are signed and
 // expire, so a dashboard that hotlinks them goes blank after a while. Every creative
@@ -9,7 +10,8 @@ import { DATA_DIR } from "../store";
 // full-resolution image once, after that it's served from disk forever
 // (Meta creatives are immutable, so the cache never goes stale).
 
-export const CREATIVE_DIR = path.join(DATA_DIR, "creatives");
+/** Per workspace: a creative is only served to the workspace whose token could read it. */
+const creativeDir = async () => path.join(await dataDir(), "creatives");
 
 interface Source {
   accountId: string;
@@ -23,8 +25,8 @@ const g = globalThis as unknown as { __ocpCreativeSrc?: Map<string, Source>; __o
 const sources = (g.__ocpCreativeSrc ??= new Map());
 const jobs = (g.__ocpCreativeJobs ??= new Map());
 
-export function registerCreativeSource(creativeId: string, src: Source) {
-  sources.set(creativeId, src);
+export function registerCreativeSource(tenant: string, creativeId: string, src: Source) {
+  sources.set(`${tenant}:${creativeId}`, src);
 }
 
 export const creativeImageUrl = (creativeId: string) => `/api/creative/${creativeId}`;
@@ -38,17 +40,19 @@ const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "
 const MIME: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" };
 
 async function fromDisk(id: string): Promise<CachedImage | null> {
+  const dir = await creativeDir();
   for (const ext of Object.keys(MIME)) {
     try {
-      return { bytes: await fs.readFile(path.join(CREATIVE_DIR, `${id}.${ext}`)), mime: MIME[ext] };
+      return { bytes: await fs.readFile(path.join(dir, `${id}.${ext}`)), mime: MIME[ext] };
     } catch {}
   }
   return null;
 }
 
 /** Cached creative image, downloading it on first use (deduplicated across requests). */
-export function getCreativeImage(id: string): Promise<CachedImage> {
-  const running = jobs.get(id);
+export async function getCreativeImage(id: string): Promise<CachedImage> {
+  const key = `${await currentTenant()}:${id}`;
+  const running = jobs.get(key);
   if (running) return running;
   const job = (async () => {
     const cached = await fromDisk(id);
@@ -58,17 +62,18 @@ export function getCreativeImage(id: string): Promise<CachedImage> {
     if (!res.ok) throw new Error(`Kép letöltése sikertelen (${res.status})`);
     const mime = res.headers.get("content-type")?.split(";")[0] ?? "image/jpeg";
     const bytes = Buffer.from(await res.arrayBuffer());
-    await fs.mkdir(CREATIVE_DIR, { recursive: true });
-    await fs.writeFile(path.join(CREATIVE_DIR, `${id}.${EXT[mime] ?? "jpg"}`), bytes);
+    const dir = await creativeDir();
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, `${id}.${EXT[mime] ?? "jpg"}`), bytes);
     return { bytes, mime };
-  })().finally(() => jobs.delete(id));
-  jobs.set(id, job);
+  })().finally(() => jobs.delete(key));
+  jobs.set(key, job);
   return job;
 }
 
 async function resolveOriginal(id: string): Promise<string> {
   const { graph } = await import("../meta/graph");
-  let src = sources.get(id);
+  let src = sources.get(`${await currentTenant()}:${id}`);
   if (!src) {
     // not seen since the server started: ask Meta directly
     const c = await graph<{ account_id?: string; image_hash?: string; image_url?: string; thumbnail_url?: string }>(

@@ -12,7 +12,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const provider = await getProvider();
     await provider.setAdStatus(id, parsed.data.status);
     const name = (await provider.listAds()).find((a) => a.id === id)?.name ?? id;
-    await logActivity("user", "action", `${parsed.data.status === "PAUSED" ? "Leállítva" : "Elindítva"}: ${name}`);
+    await logActivity("user", "action", `${parsed.data.status === "PAUSED" ? "Leállítva" : "Elindítva"}: ${name}`, {
+      type: "status",
+      level: "ad",
+      id,
+      accountId: provider.account.id,
+      status: parsed.data.status === "PAUSED" ? "ACTIVE" : "PAUSED",
+    });
     return Response.json({ ok: true });
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });

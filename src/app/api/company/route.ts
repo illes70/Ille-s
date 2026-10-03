@@ -24,6 +24,7 @@ const Company = z.object({
   usp: z.string().max(2000),
   brandVoice: z.string().max(2000),
   targetCpl: z.number().positive().optional(),
+  dailySpendCap: z.number().positive().optional(),
   pageId: z.string().optional(),
   logoUrl: z.string().optional(),
   colors: z.tuple([z.string(), z.string()]),

@@ -5,7 +5,7 @@ import { Sidebar } from "./Sidebar";
 import { LiveProvider } from "./live/LiveProvider";
 import { LeadToasts } from "./live/LeadToasts";
 
-const BARE = ["/login", "/register"];
+const BARE = ["/login", "/register", "/privacy"];
 
 /** App chrome (sidebar, live stream, toasts) everywhere except the sign-in pages. */
 export function AppShell({ children }: { children: React.ReactNode }) {

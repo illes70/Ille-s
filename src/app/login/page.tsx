@@ -27,7 +27,8 @@ export default function LoginPage() {
       endpoint="/api/auth/login"
       onDone={() => {
         const next = new URLSearchParams(window.location.search).get("next");
-        window.location.href = next?.startsWith("/") ? next : "/overview";
+        // only same-site paths ("//evil.com" would leave the site)
+        window.location.href = next && /^\/(?![\/\\])/.test(next) ? next : "/overview";
       }}
       footer={signupOpen ? { text: "Még nincs fiókod?", href: "/register", link: "Regisztráció" } : undefined}
     />

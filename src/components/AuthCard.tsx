@@ -20,6 +20,10 @@ export function AuthCard(props: {
   endpoint: string;
   onDone: () => void;
   footer?: { text: string; href: string; link: string };
+  /** sent along with the fields (e.g. an invite token) */
+  extra?: Record<string, string>;
+  /** shown instead of the form (e.g. sign-up closed) */
+  blocked?: string;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +33,7 @@ export function AuthCard(props: {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const res = await fetch(props.endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    const res = await fetch(props.endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...props.extra, ...values }) });
     if (res.ok) return props.onDone();
     setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Hiba történt");
     setBusy(false);
@@ -46,6 +50,10 @@ export function AuthCard(props: {
           <h1 className="text-xl font-semibold tracking-tight">{props.title}</h1>
           <p className="mt-1 text-[13px] text-muted">{props.sub}</p>
         </div>
+        {props.blocked ? (
+          <p className="rounded-lg bg-surface-2 px-3 py-3 text-sm text-muted">{props.blocked}</p>
+        ) : (
+        <>
         {props.fields.map((f, i) => (
           <label key={f.name} className="block">
             <span className="mb-1.5 block text-[13px] text-muted">{f.label}</span>
@@ -63,6 +71,8 @@ export function AuthCard(props: {
         <button disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-fg py-2.5 text-sm font-semibold text-bg disabled:opacity-50">
           {busy && <Loader2 size={15} className="animate-spin" />} {props.submit}
         </button>
+        </>
+        )}
         {props.footer && (
           <p className="text-center text-[13px] text-muted">
             {props.footer.text}{" "}

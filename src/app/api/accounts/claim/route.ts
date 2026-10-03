@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   if (!id || !businessId) return Response.json({ error: "Hiányzó fiók" }, { status: 400 });
   try {
     await claimAccount(id, businessId);
-    invalidateAccounts();
+    await invalidateAccounts();
     await logActivity("user", "action", `Hozzáférés beállítva: ${name ?? id}`);
     void discoverAccounts();
     return Response.json({ ok: true });

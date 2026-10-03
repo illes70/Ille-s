@@ -2,6 +2,7 @@ import "server-only";
 import type { Ad, AdAccount, AdStatus, Lead } from "../types";
 import { readStore } from "../store";
 import { adsChanged } from "../live-bus";
+import { currentTenant, envMetaToken } from "../tenant";
 
 export interface NewAdInput {
   adsetId: string;
@@ -72,30 +73,38 @@ export interface AdsProvider {
 
 /** Meta mode when there is a token from Facebook Login or from .env. */
 export async function metaConfigured(): Promise<boolean> {
-  return !!(process.env.META_ACCESS_TOKEN || (await readStore()).metaAuth?.token);
+  return !!((await readStore()).metaAuth?.token || (await envMetaToken()));
 }
 
-// every request needs the account list: keep it for a minute instead of asking Meta each time
-const g = globalThis as unknown as { __ocpAccounts?: { at: number; list: AdAccount[]; job?: Promise<AdAccount[]> } };
+// every request needs the account list: keep it for a minute (per workspace) instead of asking Meta each time
+interface AccountsCache {
+  at: number;
+  list: AdAccount[];
+  job?: Promise<AdAccount[]>;
+}
+const g = globalThis as unknown as { __ocpAccounts?: Map<string, AccountsCache> };
+const accountCaches = (g.__ocpAccounts ??= new Map());
 
-export function invalidateAccounts() {
-  g.__ocpAccounts = undefined;
+export async function invalidateAccounts() {
+  accountCaches.delete(await currentTenant());
 }
 
 export async function listAccounts(): Promise<AdAccount[]> {
   if (await metaConfigured()) {
-    const c = g.__ocpAccounts;
+    const t = await currentTenant();
+    const c = accountCaches.get(t);
     if (c && Date.now() - c.at < 60_000) return c.list;
     if (c?.job) return c.job;
     const { listMetaAccounts } = await import("./graph");
     const job = listMetaAccounts();
-    g.__ocpAccounts = { at: c?.at ?? 0, list: c?.list ?? [], job };
+    accountCaches.set(t, { at: c?.at ?? 0, list: c?.list ?? [], job });
     try {
       const list = await job;
-      g.__ocpAccounts = { at: Date.now(), list };
+      accountCaches.set(t, { at: Date.now(), list });
       return list;
     } catch (err) {
-      g.__ocpAccounts = c ? { ...c, job: undefined } : undefined;
+      if (c) accountCaches.set(t, { ...c, job: undefined });
+      else accountCaches.delete(t);
       // keep serving the last good list rather than breaking every page
       if (c?.list.length) return c.list;
       throw err;
@@ -127,7 +136,7 @@ function withLiveUpdates(p: AdsProvider): AdsProvider {
   const after = <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
     async (...args: A) => {
       const r = await fn.apply(p, args);
-      adsChanged(p.account.id);
+      await adsChanged(p.account.id);
       return r;
     };
   return Object.assign(Object.create(p) as AdsProvider, {
@@ -142,10 +151,12 @@ function withLiveUpdates(p: AdsProvider): AdsProvider {
 export async function getLeads(provider?: AdsProvider): Promise<Lead[]> {
   const p = provider ?? (await getProvider());
   const [fromPlatform, store] = await Promise.all([p.listLeads(), readStore()]);
-  // Leads pushed by the webhook land in the store first; merge them in without duplicates.
+  // Leads pushed by the webhook / pulled in at consent land in the store first (with their
+  // spam check and account): the stored copy wins, the platform fills in the rest.
+  const stored = new Map(store.leads.map((l) => [l.id, l]));
   const seen = new Set(fromPlatform.map((l) => l.id));
   const pushed = store.leads.filter((l) => l.accountId === p.account.id && !seen.has(l.id));
-  return [...pushed, ...fromPlatform]
+  return [...pushed, ...fromPlatform.map((l) => ({ ...l, ...stored.get(l.id) }))]
     .map((l) => ({ ...l, status: store.leadStatus?.[l.id] ?? l.status ?? "new" }))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

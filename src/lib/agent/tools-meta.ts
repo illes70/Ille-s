@@ -337,7 +337,7 @@ export const metaTools: ToolDef[] = [
         end_time: i.end_time,
         bid_amount: m.toMinor(i.bid_amount),
       });
-      adsChanged(c.accountId);
+      await adsChanged(c.accountId);
       await logActivity("agent", "action", `Hirdetéscsoport módosítva: ${i.adset_id}${i.targeting ? " (célzás)" : ""}${i.name ? " (név)" : ""}`);
       return { ok: true };
     },
@@ -357,7 +357,7 @@ export const metaTools: ToolDef[] = [
       const c = await ctx();
       if (c.meta) {
         const res = await (await manage()).copyObject(i.level, i.id, { targetId: i.target_id, deep: i.deep, suffix: i.rename_suffix });
-        adsChanged(c.accountId);
+        await adsChanged(c.accountId);
         await logActivity("agent", "create", `Másolat (${i.level}): ${i.id} → ${res.id}`);
         return { ok: true, new_id: res.id, status: "PAUSED" };
       }
@@ -377,7 +377,7 @@ export const metaTools: ToolDef[] = [
         createdAt: new Date().toISOString(),
       }));
       await updateStore((d) => void d.ads.unshift(...copies), ["ads"]);
-      adsChanged(c.accountId);
+      await adsChanged(c.accountId);
       await logActivity("agent", "create", `Másolat (${i.level}, demó): ${source.length} hirdetés`);
       return { ok: true, new_id: i.level === "ad" ? copies[0].id : newGroup, status: "PAUSED", demo: DEMO_NOTE };
     },

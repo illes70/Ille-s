@@ -1,6 +1,7 @@
 import "server-only";
 import type { AccountSummary, Ad, AdAccount, AdStatus, DailyPoint, LearningStatus, Lead, MetaPage } from "../types";
 import { readStore } from "../store";
+import { currentTenant, envMetaToken } from "../tenant";
 import { loadImage } from "../creative/media";
 import { creativeImageUrl, registerCreativeSource } from "../creative/creative-images";
 import type { AdsProvider, CreativeUpdate, LeadFormInput, NewAdInput } from "./provider";
@@ -47,8 +48,9 @@ interface GraphError {
   error_user_msg?: string;
 }
 
+/** The workspace's Facebook Login token, else (operator only) the .env token. */
 export async function metaToken(): Promise<string | undefined> {
-  return process.env.META_ACCESS_TOKEN || (await readStore()).metaAuth?.token;
+  return (await readStore()).metaAuth?.token || (await envMetaToken());
 }
 
 interface CallInit {
@@ -141,11 +143,12 @@ export async function graphBatch<T>(relativeUrls: string[]): Promise<({ ok: true
   return out;
 }
 
-/** Today + last 7 days + active ad count for every account: 3 requests per account, batched. */
+/** Today + yesterday + last 7 days + active ad count for every account: 4 requests per account, batched. */
 export async function metaAccountSummaries(accountIds: string[]): Promise<AccountSummary[]> {
   const fields = "spend,impressions,clicks,actions";
   const urls = accountIds.flatMap((id) => [
     `${id}/insights?fields=${fields}&date_preset=today`,
+    `${id}/insights?fields=${fields}&date_preset=yesterday`,
     `${id}/insights?fields=${fields}&date_preset=last_7d`,
     `${id}/ads?effective_status=${encodeURIComponent('["ACTIVE"]')}&limit=0&summary=total_count`,
   ]);
@@ -156,11 +159,12 @@ export async function metaAccountSummaries(accountIds: string[]): Promise<Accoun
     return { spend: Number(d.spend ?? 0), leads: leadCount(d.actions), clicks: Number(d.clicks ?? 0), impressions: Number(d.impressions ?? 0) };
   };
   return accountIds.map((accountId, i) => {
-    const [t, w, a] = res.slice(i * 3, i * 3 + 3);
+    const [t, y, w, a] = res.slice(i * 4, i * 4 + 4);
     const failed = [t, w].find((r) => !r.ok) as { error: string } | undefined;
     return {
       accountId,
       today: pick(t),
+      yesterday: pick(y),
       last7: pick(w),
       activeAds: a.ok ? (a.body.summary?.total_count ?? 0) : 0,
       error: failed?.error,
@@ -291,7 +295,7 @@ export async function claimAccount(accountId: string, businessId: string) {
 /** Page tokens: from the Facebook Login connection, else from /me/accounts with the env token. */
 export async function metaPages(): Promise<MetaPage[]> {
   const auth = (await readStore()).metaAuth;
-  if (auth?.pages.length && !process.env.META_ACCESS_TOKEN) return auth.pages;
+  if (auth?.pages.length) return auth.pages;
   const rows = await all<{ id: string; name: string; access_token: string }>("me/accounts", { fields: "id,name,access_token", limit: "100" });
   return rows.map((r) => ({ id: r.id, name: r.name, token: r.access_token }));
 }
@@ -365,10 +369,11 @@ export class MetaGraphProvider implements AdsProvider {
       });
       byAd.set(d.ad_id, list);
     }
-    return ads.map((a) => this.toAd(a, (byAd.get(a.id) ?? []).sort((x, y) => x.date.localeCompare(y.date))));
+    const tenant = await currentTenant();
+    return ads.map((a) => this.toAd(tenant, a, (byAd.get(a.id) ?? []).sort((x, y) => x.date.localeCompare(y.date))));
   }
 
-  private toAd(a: GraphAd, daily: DailyPoint[]): Ad {
+  private toAd(tenant: string, a: GraphAd, daily: DailyPoint[]): Ad {
     const i = a.insights?.data[0] ?? {};
     const leads = leadCount(i.actions);
     const spend = Number(i.spend ?? 0);
@@ -380,7 +385,7 @@ export class MetaGraphProvider implements AdsProvider {
     // the best original we can get: uploaded image (by hash) > video cover > 1080px rendering
     const hash = isVideo ? undefined : (c.image_hash ?? story?.link_data?.image_hash ?? firstCard?.image_hash ?? c.asset_feed_spec?.images?.[0]?.hash);
     const direct = (isVideo ? story?.video_data?.image_url : undefined) ?? c.thumbnail_url ?? c.image_url ?? firstCard?.picture ?? c.asset_feed_spec?.images?.[0]?.url;
-    if (c.id) registerCreativeSource(c.id, { accountId: this.account.id, hash, url: direct });
+    if (c.id) registerCreativeSource(tenant, c.id, { accountId: this.account.id, hash, url: direct });
     return {
       id: a.id,
       accountId: this.account.id,
@@ -561,6 +566,8 @@ export class MetaGraphProvider implements AdsProvider {
   }
 
   async listLeads(): Promise<Lead[]> {
+    // leads are personal data: only after the user allowed OCP to pull them in
+    if (!(await readStore()).leadConsent) return [];
     const page = await this.page().catch(() => null);
     if (!page) return [];
     const forms = await all<{ id: string; name: string }>(`${page.id}/leadgen_forms`, { fields: "id,name", limit: "50" }, 100, page.token);
@@ -580,7 +587,7 @@ export class MetaGraphProvider implements AdsProvider {
   }
 }
 
-type RawLead = { id: string; created_time: string; ad_id?: string; field_data: { name: string; values: string[] }[] };
+export type RawLead = { id: string; created_time: string; ad_id?: string; field_data: { name: string; values: string[] }[] };
 
 const FIELD_ALIASES: Record<keyof Pick<Lead, "name" | "phone" | "email" | "city">, string[]> = {
   name: ["full_name", "first_name", "név", "teljes_név"],

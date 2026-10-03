@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import { completeLogin } from "@/lib/meta/oauth";
 import { logActivity, updateStore } from "@/lib/store";
-import { adsCache } from "@/lib/live-bus";
+import { adsCacheOf } from "@/lib/live-bus";
+import { currentTenant } from "@/lib/tenant";
 import { invalidateAccounts } from "@/lib/meta/provider";
 import { startFullSync } from "@/lib/live";
 
@@ -17,25 +18,29 @@ export async function GET(req: Request) {
   }
   try {
     const auth = await completeLogin(code, url.origin);
-    await updateStore(
+    const firstConnect = await updateStore(
       (d) => {
+        const first = !d.metaAuth;
+        // real money from now on: the autopilot starts in "always ask" – the user turns it up
+        if (first) d.settings.autopilot.level = "ask";
         d.metaAuth = auth;
         d.activeAccountId = undefined;
         // fresh start with real data: drop the demo chat history
         d.chats = {};
+        return first;
       },
       ["accounts", "ads", "leads", "health", "company", "overview"],
     );
-    adsCache.clear();
-    invalidateAccounts();
+    adsCacheOf(await currentTenant()).clear();
+    await invalidateAccounts();
     const subscribed = auth.pages.filter((p) => p.leadgenSubscribed).length;
     await logActivity(
       "system",
       "action",
-      `Facebook csatlakoztatva (${auth.userName}): ${auth.pages.length} oldal, ebből ${subscribed} azonnali leadekkel.`,
+      `Facebook csatlakoztatva (${auth.userName}): ${auth.pages.length} oldal${subscribed ? `, ebből ${subscribed} azonnali leadekkel` : ""}.${firstConnect ? " A robotpilóta „mindig kérdez” módban indul – a Beállításokban lazíthatsz rajta." : ""}`,
     );
     // numbers for every account in ~1-2 s, ads and images stream in after that
-    startFullSync();
+    await startFullSync();
     return Response.redirect(`${url.origin}/overview?connected=1`, 302);
   } catch (err) {
     const msg = encodeURIComponent(err instanceof Error ? err.message : String(err));

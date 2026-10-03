@@ -93,6 +93,15 @@ export default function CompanyPage() {
                 onChange={(e) => set({ targetCpl: e.target.value ? Number(e.target.value) : undefined })}
               />
             </Field>
+            <Field label="Napi költési plafon (felette minden hirdetést leállítok)">
+              <input
+                className="input"
+                type="number"
+                value={c.dailySpendCap ?? ""}
+                placeholder="nincs plafon"
+                onChange={(e) => set({ dailySpendCap: e.target.value ? Number(e.target.value) : undefined })}
+              />
+            </Field>
             {data.mode === "meta" && (
               <Field label="Facebook-oldal (hirdetések, instant formok)">
                 <select className="input" value={c.pageId ?? ""} onChange={(e) => set({ pageId: e.target.value || undefined })}>

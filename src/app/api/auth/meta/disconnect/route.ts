@@ -1,5 +1,6 @@
 import { logActivity, updateStore } from "@/lib/store";
-import { adsCache } from "@/lib/live-bus";
+import { adsCacheOf } from "@/lib/live-bus";
+import { currentTenant } from "@/lib/tenant";
 import { invalidateAccounts } from "@/lib/meta/provider";
 
 export async function POST() {
@@ -7,8 +8,8 @@ export async function POST() {
     d.metaAuth = undefined;
     d.activeAccountId = undefined;
   }, ["accounts", "ads", "leads", "health"]);
-  adsCache.clear();
-  invalidateAccounts();
+  adsCacheOf(await currentTenant()).clear();
+  await invalidateAccounts();
   await logActivity("user", "action", "Facebook-kapcsolat bontva – demó mód.");
   return Response.json({ ok: true });
 }

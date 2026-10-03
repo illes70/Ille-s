@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { ArrowUp, Check, ImagePlus, Loader2, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import type { ChatTurnEvent, LiveKey, MediaItem } from "@/lib/types";
 import { refreshAll, usePoll } from "./usePoll";
+import { BriefCard } from "./BriefCard";
 
 interface Step {
   label: string;
@@ -181,6 +182,7 @@ export function Chat() {
       )}
       <div className="flex-1 overflow-y-auto px-4 md:px-8">
         <div className="mx-auto max-w-3xl py-6">
+          <BriefCard onAsk={(t) => void send(t)} />
           {msgs.length === 0 ? (
             <Welcome onPick={send} company={company?.company.name} />
           ) : (

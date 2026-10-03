@@ -2,9 +2,22 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 // Everything needs a logged-in user, except sign-in/up, the Meta webhook
-// (verified by its signature) and the cron endpoint (own secret).
+// (verified by its signature), the cron endpoint (own secret) and the app shell
+// files a browser fetches without cookies (manifest, service worker, icons).
 
-const PUBLIC = ["/login", "/register", "/api/auth/login", "/api/auth/register", "/api/auth/status", "/api/webhooks/meta", "/api/cron/scan"];
+const PUBLIC = [
+  "/login",
+  "/register",
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/status",
+  "/api/webhooks/meta",
+  "/api/cron/scan",
+  "/manifest.webmanifest",
+  "/sw.js",
+  "/pwa-icon",
+  "/privacy",
+];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;

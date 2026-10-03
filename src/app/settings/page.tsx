@@ -6,6 +6,8 @@ import { FacebookIcon } from "@/components/FacebookIcon";
 import type { AutopilotLevel, Settings } from "@/lib/types";
 import { Page, PageHeader } from "@/components/PageHeader";
 import { usePoll, usePollWithRefresh, refreshAll } from "@/components/usePoll";
+import { DangerCard, InviteCard, NotifyCard, ScheduleCard } from "@/components/SettingsCards";
+import { LeadConsentStatus } from "@/components/LeadConsent";
 
 const LEVELS: { id: AutopilotLevel; label: string; desc: (ap: Settings["autopilot"]) => string }[] = [
   { id: "ask", label: "Mindig kérdez", desc: () => "Minden változtatás javaslatként érkezik, semmi nem történik a jóváhagyásod nélkül." },
@@ -36,7 +38,7 @@ interface HealthCheck {
 }
 
 const BANNERS: Record<string, [string, "good" | "bad" | "warn"]> = {
-  connected: ["Facebook csatlakoztatva – a fiókok és oldalak betöltve, az azonnali leadek bekapcsolva.", "good"],
+  connected: ["Facebook csatlakoztatva – a fiókok és oldalak betöltve.", "good"],
   denied: ["A Facebook-csatlakozást megszakítottad.", "warn"],
   bad_state: ["A csatlakozás lejárt vagy megszakadt – próbáld újra.", "warn"],
   missing_app: ["Az egygombos csatlakozáshoz előbb egy Meta app kell (lásd Rendszerállapot → Meta app).", "warn"],
@@ -57,7 +59,7 @@ export default function SettingsPage() {
 
   return (
     <Page>
-      <PageHeader title="Beállítások" sub="Kapcsolatok, rendszerállapot és a robotpilóta szabályai." />
+      <PageHeader title="Beállítások" sub="Kapcsolatok, értesítések, a 0–24 robot és a robotpilóta szabályai." />
       {banner && (
         <p className={`mb-6 rounded-xl px-4 py-3 text-sm ${banner.tone === "good" ? "bg-good-soft text-good" : banner.tone === "bad" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}>
           {banner.text}
@@ -66,9 +68,15 @@ export default function SettingsPage() {
       <div className="grid max-w-6xl items-start gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <ConnectCard />
+          <NotifyCard />
           <AutopilotCard />
         </div>
-        <HealthCard />
+        <div className="space-y-6">
+          <HealthCard />
+          <ScheduleCard />
+          <InviteCard />
+          <DangerCard />
+        </div>
       </div>
     </Page>
   );
@@ -101,12 +109,13 @@ function ConnectCard() {
               A kapcsolat {days} nap múlva lejár{days < 7 ? " – csatlakozz újra." : "."}
             </p>
           )}
+          <LeadConsentStatus />
           {!!c.pages.length && (
             <ul className="divide-y divide-line rounded-xl border border-line text-[13px]">
               {c.pages.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2">
                   <span className="truncate">{p.name}</span>
-                  <span className={p.leadgenSubscribed ? "text-good" : "text-warn"}>{p.leadgenSubscribed ? "azonnali leadek" : "lekérdezéses leadek"}</span>
+                  <span className={p.leadgenSubscribed ? "text-good" : "text-muted"}>{p.leadgenSubscribed ? "azonnali leadek" : "leadek nincsenek bekötve"}</span>
                 </li>
               ))}
             </ul>
@@ -168,7 +177,7 @@ function HealthCard() {
   }
 
   return (
-    <section className="card p-6">
+    <section id="health" className="card p-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-semibold">Rendszerállapot</h2>
         <button
@@ -242,9 +251,10 @@ function AutopilotCard() {
   const ap = s.autopilot;
   const setAp = (patch: Partial<Settings["autopilot"]>) => setS({ ...s, autopilot: { ...ap, ...patch } });
 
+  const { currency, targetCpl } = s;
   async function save() {
     setSaving("saving");
-    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(s) });
+    await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currency, targetCpl, autopilot: ap }) });
     setSaving("saved");
     setTimeout(() => setSaving("idle"), 1800);
   }

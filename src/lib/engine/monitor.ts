@@ -1,5 +1,5 @@
 import "server-only";
-import type { Ad, Proposal, ProposalAction, Settings } from "../types";
+import type { Ad, Proposal, ProposalAction, Settings, UndoAction } from "../types";
 import { getProvider, listAccounts } from "../meta/provider";
 import { logActivity, newId, readStore, updateStore } from "../store";
 import { fmtMoney } from "../format";
@@ -91,17 +91,25 @@ export function analyze(ads: Ad[], s: Settings): Draft[] {
   return [...new Map(out.map((d) => [d.key, d])).values()];
 }
 
-export async function executeAction(action: ProposalAction, accountId?: string): Promise<string> {
+export async function executeAction(action: ProposalAction, accountId?: string): Promise<{ text: string; undo?: UndoAction }> {
   const provider = await getProvider(accountId);
+  const acc = provider.account.id;
   if (action.type === "set_status" && action.adId && action.status) {
     await provider.setAdStatus(action.adId, action.status);
-    return action.status === "PAUSED" ? "Hirdetés leállítva." : "Hirdetés elindítva.";
+    return {
+      text: action.status === "PAUSED" ? "Hirdetés leállítva." : "Hirdetés elindítva.",
+      undo: { type: "status", level: "ad", id: action.adId, accountId: acc, status: action.status === "PAUSED" ? "ACTIVE" : "PAUSED" },
+    };
   }
   if (action.type === "set_budget" && action.adsetId && action.dailyBudget) {
+    const before = (await provider.listAds()).find((a) => a.adsetId === action.adsetId)?.adsetDailyBudget;
     await provider.setAdsetBudget(action.adsetId, action.dailyBudget);
-    return `Napi büdzsé beállítva: ${action.dailyBudget}.`;
+    return {
+      text: `Napi büdzsé beállítva: ${action.dailyBudget}.`,
+      undo: before ? { type: "budget", level: "adset", id: action.adsetId, accountId: acc, dailyBudget: before } : undefined,
+    };
   }
-  return "Nincs automatikus lépés – a kreatív frissítést a chatben indítsd.";
+  return { text: "Nincs automatikus lépés – a kreatív frissítést a chatben indítsd." };
 }
 
 /** Which fresh proposals the autopilot may execute without asking. */
@@ -187,9 +195,10 @@ export async function resolveProposal(
   }
 
   let result: string;
+  let undo: UndoAction | undefined;
   let status: Proposal["status"] = "executed";
   try {
-    result = await executeAction(p.action, p.accountId);
+    ({ text: result, undo } = await executeAction(p.action, p.accountId));
   } catch (e) {
     result = e instanceof Error ? e.message : String(e);
     status = "failed";
@@ -204,6 +213,7 @@ export async function resolveProposal(
     by,
     status === "failed" ? "error" : "action",
     `${by === "agent" ? "Robotpilóta" : "Jóváhagyva"}: ${p.title} – ${result}`,
+    status === "failed" ? undefined : undo,
   );
   return p;
 }

@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "crypto";
-import { logActivity } from "@/lib/store";
+import { logActivity, readStore } from "@/lib/store";
 import { ingestLead } from "@/lib/live";
+import { runAsTenant } from "@/lib/tenant";
+import { listTenants } from "@/lib/users";
 
 // Meta webhook for the Page `leadgen` field: new leads appear in OCP within seconds.
 // Setup: Meta app → Webhooks → Page → leadgen, callback = <OCP URL>/api/webhooks/meta,
@@ -39,13 +41,22 @@ export async function POST(req: Request) {
       .map((c) => ({ leadId: c.value.leadgen_id!, pageId: c.value.page_id ?? e.id })),
   );
 
-  const { fetchLead } = await import("@/lib/meta/graph");
-  for (const { leadId, pageId } of items) {
-    try {
-      await ingestLead(await fetchLead(leadId, pageId), "webhook");
-    } catch (err) {
-      await logActivity("system", "error", `Lead webhook hiba (${leadId}): ${err instanceof Error ? err.message : String(err)}`);
-    }
+  const { fetchLead, metaPages } = await import("@/lib/meta/graph");
+  // a lead goes only to the workspaces that connected this page AND allowed lead access
+  for (const tenant of await listTenants()) {
+    await runAsTenant(tenant, async () => {
+      const store = await readStore();
+      if (!store.leadConsent) return;
+      const pages = new Set((await metaPages().catch(() => [])).map((p) => p.id));
+      for (const { leadId, pageId } of items) {
+        if (!pageId || !pages.has(pageId) || !store.leadConsent.pageIds.includes(pageId)) continue;
+        try {
+          await ingestLead(await fetchLead(leadId, pageId), "webhook");
+        } catch (err) {
+          await logActivity("system", "error", `Lead webhook hiba (${leadId}): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    });
   }
   return Response.json({ received: items.length });
 }

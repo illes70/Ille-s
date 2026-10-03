@@ -2,9 +2,10 @@ import "server-only";
 import { promises as fs } from "fs";
 import path from "path";
 import type { MediaItem } from "../types";
-import { DATA_DIR, newId, updateStore } from "../store";
+import { dataDir, newId, updateStore } from "../store";
 
-export const MEDIA_DIR = path.join(DATA_DIR, "media");
+/** The current workspace's media folder. */
+export const mediaDir = async () => path.join(await dataDir(), "media");
 
 const EXT: Record<string, string> = {
   "image/png": "png",
@@ -33,8 +34,9 @@ export async function saveMedia(
   if (!ext) throw new Error(`Nem támogatott formátum: ${mime} (kép: JPG/PNG/WebP, videó: MP4/MOV)`);
   const id = newId("img");
   const file = `${id}.${ext}`;
-  await fs.mkdir(MEDIA_DIR, { recursive: true });
-  await fs.writeFile(path.join(MEDIA_DIR, file), bytes);
+  const dir = await mediaDir();
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, file), bytes);
   const item: MediaItem = { id, file, url: `/api/media/${file}`, createdAt: new Date().toISOString(), ...meta };
   await updateStore((d) => {
     d.media.unshift(item);
@@ -53,7 +55,7 @@ export async function loadImage(url: string): Promise<{ bytes: Buffer; mime: str
   const local = url.match(/^\/api\/media\/([\w.-]+)$/);
   if (local) {
     const ext = local[1].split(".").pop()!.toLowerCase();
-    return { bytes: await fs.readFile(path.join(MEDIA_DIR, local[1])), mime: MIME[ext] ?? "image/png" };
+    return { bytes: await fs.readFile(path.join(await mediaDir(), local[1])), mime: MIME[ext] ?? "image/png" };
   }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`A kép nem tölthető le (${res.status}): ${url}`);

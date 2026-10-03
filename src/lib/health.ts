@@ -1,8 +1,8 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { readStore, updateStore, logActivity } from "./store";
+import { readStore } from "./store";
 import { metaToken, graph, metaPages } from "./meta/graph";
-import { META_SCOPES, appCredentials, subscribeLeadgen } from "./meta/oauth";
+import { META_SCOPES, appCredentials } from "./meta/oauth";
 
 export interface HealthCheck {
   id: string;
@@ -130,6 +130,16 @@ export async function runHealthChecks(origin: string): Promise<HealthCheck[]> {
       }),
     );
     const notSubscribed = states.filter((s) => !s.ok);
+    if (!store.leadConsent && pages.length) {
+      checks.push({
+        id: "leadgen",
+        label: "Leadek bekötése",
+        status: "warn",
+        detail: `${pages.length} Facebook-oldal vár az engedélyedre – amíg nem mondod, hogy igen, az OCP nem olvassa a leadeket.`,
+        fix: { text: "Engedélyezem: kösd be az összes leadet", action: "subscribe_leadgen" },
+      });
+      return finish(checks, origin);
+    }
     checks.push({
       id: "leadgen",
       label: "Azonnali leadek (oldalak)",
@@ -206,14 +216,9 @@ function finish(checks: HealthCheck[], origin: string) {
   return checks;
 }
 
-/** One-click fix: subscribe every page to leadgen events. */
+/** One-click fix = the lead consent "yes": webhooks on + backfill for every page. */
 export async function fixLeadgen() {
-  const pages = await metaPages();
-  let ok = 0;
-  for (const p of pages) if (await subscribeLeadgen(p.id, p.token)) ok++;
-  await updateStore((d) => {
-    if (d.metaAuth) d.metaAuth.pages = d.metaAuth.pages.map((p) => ({ ...p, leadgenSubscribed: true }));
-  }, ["health"]);
-  await logActivity("system", "action", `Azonnali leadek bekapcsolva: ${ok}/${pages.length} oldal.`);
-  return { ok, total: pages.length };
+  const { connectAllLeads } = await import("./meta/lead-access");
+  const res = await connectAllLeads();
+  return { ok: res.filter((r) => r.live).length, total: res.length, pages: res };
 }

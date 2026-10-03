@@ -1,5 +1,6 @@
 import { ensureLivePoller } from "@/lib/live";
 import { subscribe } from "@/lib/live-bus";
+import { currentTenant } from "@/lib/tenant";
 import type { LiveEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +8,9 @@ export const dynamic = "force-dynamic";
 // Server-Sent Events: one long-lived stream per open tab. The server pushes every change.
 export async function GET(req: Request) {
   ensureLivePoller();
+  // each browser only ever hears its own workspace's channel
+  const tenant = await currentTenant().catch(() => null);
+  if (!tenant) return Response.json({ error: "Belépés szükséges" }, { status: 401 });
   const encoder = new TextEncoder();
   let cleanup = () => {};
 
@@ -19,7 +23,7 @@ export async function GET(req: Request) {
           cleanup();
         }
       };
-      const unsubscribe = subscribe(send);
+      const unsubscribe = subscribe(tenant, send);
       // keeps proxies from closing an idle connection
       const ping = setInterval(() => {
         try {
