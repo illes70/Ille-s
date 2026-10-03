@@ -2,7 +2,29 @@
 
 AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli helyetted. Figyel, javasol, és amit kérsz, megcsinálja, így az Ads Managert nem kell megnyitnod.
 
-## Mit tud most (v0.5)
+## Mit tud most (v0.6)
+
+**Mindenkinek saját, elzárt fiók.** Minden regisztráló (te is) külön munkaterületet kap: saját adatmappa, saját Facebook-kapcsolat, saját élő csatorna, képtár, leadek és chat. Egy ügyfél semmilyen úton nem látja a másikét – ezt automata teszt is ellenőrzi (más fiók képe: 404, más fiók eseményei nem érkeznek meg, más fiók lépése nem vonható vissza, a tulajdonos `.env` tokenje más fiókban soha nem használódik).
+
+**Új ügyfél (pl. Kis József) útja:**
+1. Beállítások → **Új ügyfél meghívása** → egyszer használható link (14 napig érvényes) → elküldöd neki.
+2. Regisztrál, belép → **Csatlakoztatás Facebookkal** → a Facebook ablakban „Tovább”.
+3. Feljön: **„Engedélyezed, hogy az összes leadet bekössem?”** → Igen → minden oldal leadje bejön (90 napra visszamenőleg), az újak másodpercek alatt; ahol a Meta nem engedi, pontos javítási lépés.
+4. Minden fiókja élőben látszik. A robotpilóta valódi fióknál „mindig kérdez” módban indul.
+
+**0–24 robot** (a szerveren fut, akkor is, ha senki nem nézi):
+- **Reggeli összefoglaló** a beállított időben (alap 7:30): „Jó reggelt, … – tegnap ennyi lead jött ennyiért, ma ez a dolgod”, a teendők egy kattintással jóváhagyhatók. Telefonra és e-mailben is.
+- **Óránkénti átvizsgálás** minden fiókra, javaslatok, robotpilóta a beállított kereten belül.
+- **Napi költési plafon** fiókonként (Cégprofil): felette minden aktív hirdetés leáll, és riasztást kapsz.
+- **Lejáró Facebook-kapcsolat** előtt egy héttel szól.
+
+**Azonnali lead-értesítés (speed-to-lead):** új leadnél másodperceken belül push a telefonra (telepíthető app: iPhone-on „Főképernyőhöz adás”) és e-mail. **Spamszűrő:** kamu név, hibás vagy kamu telefonszám, eldobható e-mail, ismételt jelentkezés – a spam nem csörög, a Leadek oldalon jelölve.
+
+**Visszavonás egy kattintással:** a Robot élőben oldalon minden státusz- és büdzséváltoztatás (asszisztens, robotpilóta, költési plafon, te) visszavonható.
+
+**Adatvédelem:** nyilvános adatkezelési tájékoztató (`/privacy`, a Meta App Review-hoz is kell), lead-engedély naplózva (ki, mikor), visszavonható, fiók és minden adat törölhető.
+
+### v0.5
 
 **Az asszisztens = tapasztalt Meta-hirdetéskezelő + ajánlatstratéga.** Mindent meg tud csinálni chatből, amit egy leadgeneráló hirdető az Ads Managerben csinál:
 - **Elemzés:** fiókállapot (fizetés, költési korlát, elutasított hirdetések okkal, Pixel), teljes kampánystruktúra érthetően, bontások (kor, nem, elhelyezés, régió, eszköz, napszak), Hirdetéstár (versenytársak, 30+ napja futó nyerők).
@@ -68,19 +90,32 @@ cp .env.example .env.local
 npm run dev                  # http://localhost:3000
 ```
 
-Első indításkor a `/register` oldalon hozd létre a fiókodat (az első regisztráló a tulajdonos, utána a regisztráció zárva; `OCP_ALLOW_SIGNUP=1` nyitva hagyja). Szerveren állíts be egy hosszú, véletlen `OCP_SECRET`-et.
+Első indításkor a `/register` oldalon hozd létre a fiókodat (az első regisztráló a tulajdonos). Utána csak meghívó linkkel lehet regisztrálni (Beállítások → Új ügyfél meghívása); `OCP_ALLOW_SIGNUP=1` mindenkinek megnyitja. Szerveren állíts be egy hosszú, véletlen `OCP_SECRET`-et.
+
+### Saját gépen, Windowson
+`scripts\windows\install-ocp.ps1` (jobb klikk → Run with PowerShell): telepít, lefordít, és az asztalra tesz egy **OCP START** és egy **OCP STOP** ikont (http://localhost:3456). Így csak addig fut, amíg a géped be van kapcsolva – a 0–24-hez szerver kell (lent).
+
+### 0–24 szerveren (ajánlott: Railway, kb. 5 $/hó)
+Az OCP egy folyamatosan futó szerver (a robot benne él), ezért **nem** Vercel/serverless, hanem tartós tárhely kell:
+1. railway.com → New Project → Deploy from GitHub repo → ezt a repót választod (a `Dockerfile` és a `railway.json` alapján épül).
+2. **Volume** hozzáadása, csatolási pont: `/app/.data` (ide kerül minden adat – enélkül újraindításkor elveszne).
+3. **Variables:** `OCP_SECRET` (hosszú véletlen szöveg), `ANTHROPIC_API_KEY`, `META_APP_ID`, `META_APP_SECRET`, `META_CONFIG_ID`, `META_VERIFY_TOKEN`, `OCP_PUBLIC_URL` (a Railway által adott https cím vagy saját domain), opcionálisan `RESEND_API_KEY` + `OCP_MAIL_FROM` az e-mailekhez.
+4. Settings → Networking → Generate Domain (vagy saját domain). Ezt a címet add meg a Meta appban (átirányítás + webhook).
+
+Bármely más Docker-tárhely is jó (Fly.io, Render, saját VPS): egy példány, `/app/.data` tartós kötetre csatolva, `PORT` környezeti változó.
 
 Kulcsok nélkül az OCP **demó módban** fut (két kitalált cég, szimulált élő költés és leadek) – így minden kipróbálható.
 
 ### Élő Meta-fiók – egyszeri beállítás (kb. 15 perc)
 1. **Claude:** console.anthropic.com → API Keys → `ANTHROPIC_API_KEY`.
 2. **Meta app:** developers.facebook.com → My Apps → Create App (*Business*). Termékek: *Facebook Login for Business* és *Webhooks*. Az App ID / App Secret → `META_APP_ID`, `META_APP_SECRET`. A Facebook Login beállításainál engedélyezett átirányítási URL: `<OCP címe>/api/auth/meta/callback`.
-3. **Csatlakozás:** OCP → Beállítások → **Csatlakozás Facebookkal**. Az összes hirdetési fiók és oldal bejön, az oldalakon bekapcsol az azonnali lead-értesítés.
-4. **Azonnali leadek:** az OCP-nek nyilvános címen kell futnia (pl. Vercel; `OCP_PUBLIC_URL`). Meta app → Webhooks → *Page* → `leadgen`, callback: `<OCP címe>/api/webhooks/meta`, verify token: `META_VERIFY_TOKEN`. Amíg ez nincs, a leadek percenkénti lekérdezéssel jönnek.
+3. **Facebook Login for Business konfiguráció:** a Meta appban Facebook Login for Business → Configurations → Create: típus *System-user access token* (nem jár le) vagy *User access token*; engedélyek: `ads_management`, `ads_read`, `business_management`, `pages_show_list`, `pages_read_engagement`, `pages_manage_ads`, `pages_manage_metadata`, `leads_retrieval`; eszközök: hirdetési fiókok + oldalak. A Configuration ID → `META_CONFIG_ID`.
+4. **Csatlakozás:** OCP → **Csatlakozás Facebookkal** → a Facebook ablakban „Tovább”. Az összes hirdetési fiók és oldal bejön, utána az OCP megkérdezi, beköthet-e minden leadet.
+5. **Azonnali leadek:** az OCP-nek nyilvános címen kell futnia (`OCP_PUBLIC_URL`). Meta app → Webhooks → *Page* → `leadgen`, callback: `<OCP címe>/api/webhooks/meta`, verify token: `META_VERIFY_TOKEN`. Amíg ez nincs, a leadek percenkénti lekérdezéssel jönnek.
 
-Alternatíva tesztre: `META_ACCESS_TOKEN` (System User token) a `.env.local`-ban.
+Alternatíva fejlesztéshez: `META_ACCESS_TOKEN` a `.env.local`-ban – ez kizárólag a tulajdonos fiókjára érvényes, más ügyfélre soha.
 
-> Saját használatra a Meta app *Development* módban is működik (a saját fiókjaiddal). Más ügyfeleknek a Meta App Review kell az `ads_management`, `leads_retrieval` stb. engedélyekre – ez az eladható verzió előfeltétele.
+> Saját használatra a Meta app *Development* módban is működik (a saját fiókjaiddal). Teszt-ügyfelet (pl. egy barátot) a Meta app → App roles → *Testers* alatt adhatsz hozzá – neki is azonnal működik. Bárki másnak a Meta **App Review** (`ads_management`, `leads_retrieval` stb.) és **Business Verification** kell – ez az eladható verzió előfeltétele. Adatkezelési tájékoztató URL: `<OCP címe>/privacy`, adattörlési útmutató: `<OCP címe>/privacy#torles`.
 
 ## Felépítés
 
