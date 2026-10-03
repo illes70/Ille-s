@@ -12,10 +12,12 @@ AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli hel
 3. Feljön: **„Engedélyezed, hogy az összes leadet bekössem?”** → Igen → minden oldal leadje bejön (90 napra visszamenőleg), az újak másodpercek alatt; ahol a Meta nem engedi, pontos javítási lépés.
 4. Minden fiókja élőben látszik. A robotpilóta valódi fióknál „mindig kérdez” módban indul.
 
+**Minden módosítás a te igeneddel.** A Metán semmi nem indul, nem áll le és nem változik jóváhagyás nélkül – ezt a kód kényszeríti ki, nem csak az asszisztens utasítása. Az asszisztens a lépéseket egy **„Erre gondoltam – mehet?”** kártyán mutatja (mit, miért, mennyi); a lépéseket kipipálhatod, és a **Mehet** gombbal indítod – vagy írásban: „mehet, de a 2-t hagyd ki”, „a büdzsé legyen 5000”. Összefüggő lépések (kampány → csoport → hirdetések) egy kártyán mennek. Ha a szakmai fék egy lépésnél aggályt jelez, külön „Figyelmeztetés – mégis mehet?” kártya jön. A robot magától csak javasol.
+
 **0–24 robot** (a szerveren fut, akkor is, ha senki nem nézi):
 - **Reggeli összefoglaló** a beállított időben (alap 7:30): „Jó reggelt, … – tegnap ennyi lead jött ennyiért, ma ez a dolgod”, a teendők egy kattintással jóváhagyhatók. Telefonra és e-mailben is.
-- **Óránkénti átvizsgálás** minden fiókra, javaslatok, robotpilóta a beállított kereten belül.
-- **Napi költési plafon** fiókonként (Cégprofil): felette minden aktív hirdetés leáll, és riasztást kapsz.
+- **Óránkénti átvizsgálás** minden fiókra – javaslatok a Javaslatok fülre, egy kattintással jóváhagyhatók.
+- **Napi költési plafon** fiókonként (Cégprofil): túllépéskor azonnali riasztás + egy kattintásos „minden leállítása” javaslat (magától nem állít le semmit).
 - **Lejáró Facebook-kapcsolat** előtt egy héttel szól.
 
 **Azonnali lead-értesítés (speed-to-lead):** új leadnél másodperceken belül push a telefonra (telepíthető app: iPhone-on „Főképernyőhöz adás”) és e-mail. **Spamszűrő:** kamu név, hibás vagy kamu telefonszám, eldobható e-mail, ismételt jelentkezés – a spam nem csörög, a Leadek oldalon jelölve.

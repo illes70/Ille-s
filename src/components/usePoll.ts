@@ -18,6 +18,7 @@ const KEY_BY_PATH: Record<string, LiveKey> = {
   "/api/brief": "brief",
   "/api/settings": "settings",
   "/api/usage": "settings",
+  "/api/plans": "plans",
   "/api/leads/consent": "leads",
 };
 

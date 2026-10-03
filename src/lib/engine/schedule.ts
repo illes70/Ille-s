@@ -1,8 +1,7 @@
 import "server-only";
 import type { Overview } from "../live";
-import type { AdStatus, UndoAction } from "../types";
 import { fmtMoney } from "../format";
-import { logActivity, readStore, settingsWithDefaults, updateStore } from "../store";
+import { logActivity, newId, readStore, settingsWithDefaults, updateStore } from "../store";
 import { currentTenant } from "../tenant";
 import { listUsers, tenantOf } from "../users";
 import { notify } from "../notify";
@@ -57,26 +56,32 @@ async function spendGuard(ov: Overview, today: string) {
     if (!cap || summary.today.spend < cap) continue;
     if (store.jobs?.guardTripped?.[account.id] === today) continue;
 
-    const { getAdsLive } = await import("../live");
-    const { getProvider } = await import("../meta/provider");
-    const { ads } = await getAdsLive(account.id, 0);
-    const provider = await getProvider(account.id);
-    const active = ads.filter((a) => a.status === "ACTIVE");
-    const paused: { level: "ad"; id: string; status: AdStatus }[] = [];
-    for (const ad of active) {
-      try {
-        await provider.setAdStatus(ad.id, "PAUSED");
-        paused.push({ level: "ad", id: ad.id, status: "ACTIVE" });
-      } catch (err) {
-        console.error("[ocp guard] pause failed", ad.id, err);
-      }
-    }
+    // the user decides: an alert + a one-click proposal, nothing is paused on its own
     await updateStore((d) => void (d.jobs = { ...d.jobs, guardTripped: { ...d.jobs?.guardTripped, [account.id]: today } }));
     const money = (n: number) => fmtMoney(n, account.currency);
-    const undo: UndoAction = { type: "statuses", accountId: account.id, items: paused };
-    const text = `Napi költési plafon elérve – ${account.name}: ${money(summary.today.spend)} / ${money(cap)}. ${paused.length} aktív hirdetést leállítottam, holnap reggel te döntesz az újraindításról.`;
-    await logActivity("system", "guard", text, paused.length ? undo : undefined);
-    await notify("alert", { title: `🛑 Költési plafon: ${account.name}`, body: text, url: "/activity", tag: `guard-${account.id}` });
+    const text = `Napi költési plafon túllépve – ${account.name}: ${money(summary.today.spend)} / ${money(cap)} (${summary.activeAds} aktív hirdetés). Semmit nem állítottam le – a Javaslatoknál egy kattintással leállíthatod.`;
+    await updateStore(
+      (d) => {
+        const key = `${account.id}:cap:${today}`;
+        if (d.proposals.some((p) => p.key === key)) return;
+        d.proposals.unshift({
+          id: newId("prp"),
+          key,
+          accountId: account.id,
+          kind: "pause_ad",
+          severity: "high",
+          title: `Költési plafon: minden aktív hirdetés leállítása · ${account.name}`,
+          reason: `Ma eddig ${money(summary.today.spend)} ment el, a beállított napi plafon ${money(cap)}.`,
+          impact: "A mai további költés megáll; holnap egy kattintással visszaindítható (Visszavonás).",
+          action: { type: "pause_all", accountId: account.id },
+          status: "pending",
+          createdAt: new Date().toISOString(),
+        });
+      },
+      ["proposals"],
+    );
+    await logActivity("system", "guard", text);
+    await notify("alert", { title: `🛑 Költési plafon: ${account.name}`, body: text, url: "/inbox", tag: `guard-${account.id}` });
   }
 }
 

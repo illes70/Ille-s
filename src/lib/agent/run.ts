@@ -26,6 +26,9 @@ const client = new Anthropic();
 export async function runAgentTurn(userText: string, images: string[], emit: (e: ChatTurnEvent) => void) {
   // every company (ad account) has its own conversation
   const accountId = (await getProvider()).account.id;
+  // the user answered: a written "mehet" may now approve the open plan
+  const { markUserResponded } = await import("./plans");
+  await markUserResponded(accountId);
   const store = await readStore();
   const history: MessageParam[] = [...(store.chats[accountId] ?? [])];
 
@@ -121,6 +124,10 @@ export async function runAgentTurn(userText: string, images: string[], emit: (e:
         emit({ type: "tool_start", tool: t.name, label });
         const r = await runTool(t.name, t.input);
         emit({ type: "tool_end", tool: t.name, label, ok: r.ok, flag: r.flag });
+        if (r.ok && t.name === "propose_changes" && typeof r.content === "string") {
+          const planId = (JSON.parse(r.content) as { plan_id?: string }).plan_id;
+          if (planId) emit({ type: "plan", planId });
+        }
         return {
           type: "tool_result" as const,
           tool_use_id: t.id,

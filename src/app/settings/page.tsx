@@ -1,24 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, CheckCircle2, CircleX, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, CircleX, ExternalLink, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import { FacebookIcon } from "@/components/FacebookIcon";
-import type { AutopilotLevel, Settings } from "@/lib/types";
+import type { Settings } from "@/lib/types";
 import { Page, PageHeader } from "@/components/PageHeader";
 import { usePoll, usePollWithRefresh, refreshAll } from "@/components/usePoll";
 import { AiCard, DangerCard, InviteCard, NotifyCard, ScheduleCard } from "@/components/SettingsCards";
 import { LeadConsentStatus } from "@/components/LeadConsent";
 
-const LEVELS: { id: AutopilotLevel; label: string; desc: (ap: Settings["autopilot"]) => string }[] = [
-  { id: "ask", label: "Mindig kérdez", desc: () => "Minden változtatás javaslatként érkezik, semmi nem történik a jóváhagyásod nélkül." },
-  {
-    id: "bounded",
-    label: "Kereten belül automata",
-    desc: (ap) =>
-      `Magától leállítja, ami a cél CPL ${ap.autoPauseSpendMultiplier}-szorosát elköltötte lead nélkül, és legfeljebb ${ap.maxBudgetIncreasePct}%-kal emeli a nyerők büdzséjét. Minden más kérdés.`,
-  },
-  { id: "full", label: "Teljes automata", desc: () => "Minden végrehajtható javaslatot azonnal megcsinál, és utólag jelent." },
-];
 
 interface Connection {
   appConfigured: boolean;
@@ -262,20 +252,16 @@ function AutopilotCard() {
 
   return (
     <section className="card space-y-5 p-6">
-      <h2 className="font-semibold">Robotpilóta</h2>
-      <div className="space-y-2">
-        {LEVELS.map((l) => (
-          <label
-            key={l.id}
-            className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${ap.level === l.id ? "border-accent bg-accent-soft/50" : "border-line"}`}
-          >
-            <input type="radio" name="level" checked={ap.level === l.id} onChange={() => setAp({ level: l.id })} className="mt-1 accent-[var(--accent)]" />
-            <span>
-              <span className="block text-sm font-medium">{l.label}</span>
-              <span className="block text-[13px] text-muted">{l.desc(ap)}</span>
-            </span>
-          </label>
-        ))}
+      <h2 className="font-semibold">Figyelő szabályok</h2>
+      <div className="flex items-start gap-3 rounded-xl border border-accent/40 bg-accent-soft/50 p-3">
+        <ShieldCheck size={18} className="mt-0.5 shrink-0 text-accent" />
+        <p className="text-[13px]">
+          <span className="block text-sm font-medium">Minden módosítás a te igeneddel</span>
+          <span className="text-muted">
+            A robot éjjel-nappal figyel és javasol, de a Metán semmit nem indít, nem állít le és nem módosít magától. Az asszisztens minden lépést „Erre
+            gondoltam – mehet?” kártyán mutat meg; te pipálod ki, mi menjen.
+          </span>
+        </p>
       </div>
       <Field label="Alapértelmezett cél CPL (cégenként a Cégprofilban felülírható)">
         <div className="flex gap-2">
@@ -283,10 +269,10 @@ function AutopilotCard() {
           <input value={s.currency} onChange={(e) => setS({ ...s, currency: e.target.value.toUpperCase().slice(0, 3) })} className="input w-20 shrink-0" />
         </div>
       </Field>
-      <Field label={`Leállítási küszöb: cél CPL × ${ap.autoPauseSpendMultiplier}`}>
+      <Field label={`Leállítási javaslat: ha a költés eléri a cél CPL × ${ap.autoPauseSpendMultiplier} összeget lead nélkül`}>
         <input type="range" min={1} max={6} step={0.5} value={ap.autoPauseSpendMultiplier} onChange={(e) => setAp({ autoPauseSpendMultiplier: Number(e.target.value) })} className="w-full accent-[var(--accent)]" />
       </Field>
-      <Field label={`Max. büdzsé emelés egy lépésben: ${ap.maxBudgetIncreasePct}%`}>
+      <Field label={`Skálázási javaslat legfeljebb +${ap.maxBudgetIncreasePct}% egy lépésben`}>
         <input type="range" min={5} max={100} step={5} value={ap.maxBudgetIncreasePct} onChange={(e) => setAp({ maxBudgetIncreasePct: Number(e.target.value) })} className="w-full accent-[var(--accent)]" />
       </Field>
       <Field label={`Frequency limit (kreatív frissítés): ${ap.frequencyLimit}`}>

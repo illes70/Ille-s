@@ -7,6 +7,7 @@ import { runScan } from "../engine/monitor";
 import { getCompany, saveCompany, searchKnowledge } from "../company";
 import { composeAdImage } from "../creative/render";
 import { generatePhoto } from "../creative/generate";
+import { PLAN_ONLY } from "./plans";
 import type { KnowledgeEntry, Proposal, Recipe } from "../types";
 import { CTA, Rich, confirmedFlag, tool, withImage, type Tool, type ToolDef, type ToolResultContent } from "./tool-kit";
 import { metaTools } from "./tools-meta";
@@ -597,9 +598,56 @@ const coreTools: ToolDef[] = [
   ),
 ];
 
-const tools: ToolDef[] = [...coreTools, ...metaTools];
+const planTools: ToolDef[] = [
+  tool(
+    "propose_changes",
+    "KÖTELEZŐ minden módosításhoz a Metán (indítás/leállítás, büdzsé, új kampány/csoport/hirdetés/űrlap/közönség, kreatívcsere, célzás, másolás, videófeltöltés). A lépéseket NEM hajtod végre: összeállítod a pontos tervet, és a felhasználó a chatben látja („Erre gondoltam – mehet?”), tételenként kipipálhatja, vagy szövegesen válaszol. Minden lépés: text = érthető magyar mondat a felhasználónak (mit, miért, mennyi), tool = a módosító eszköz neve, input = annak pontos bemenete. Egy későbbi lépés hivatkozhat egy korábbi eredményére: \"{{1.campaign_id}}\", \"{{2.adset_id}}\", \"{{3.id}}\". Előtte nézd meg az adatokat és a figyelmeztetéseket (check_ad_copy, estimate_audience…), és a kockázatot írd bele a text-be. A hívás után röviden zárd le a választ, és várj a felhasználóra.",
+    z.object({
+      title: z.string().describe("pl. „Leállítások + skálázás – Felújítás Pro”"),
+      steps: z
+        .array(z.object({ text: z.string(), tool: z.string(), input: z.record(z.string(), z.unknown()) }))
+        .min(1)
+        .max(60),
+    }),
+    (i) => `Terv jóváhagyásra: ${i.title}`,
+    async ({ title, steps }) => {
+      const { proposePlan } = await import("./plans");
+      const plan = await proposePlan((await getProvider()).account.id, title, steps);
+      return { status: "awaiting_approval", plan_id: plan.id, steps: plan.items.length, note: "A terv a felhasználó előtt van. Ne hajts végre semmit, amíg nem válaszol." };
+    },
+  ),
+  tool(
+    "execute_plan",
+    "Egy függő terv végrehajtása, CSAK ha a felhasználó a chatben szövegesen jóváhagyta („mehet”, „csináld”, „oké, de a 2-t hagyd ki”). A kihagyandó lépések sorszáma: skip_steps. Ha a felhasználó módosítást kér (nem csak kihagyást, pl. más összeget), NE ezt hívd: adj új tervet a propose_changes-szel. confirm_warning_steps: azok a lépések, amelyeknél egy korábbi végrehajtás figyelmeztetett (warning), és a felhasználó azt mondta, hogy mégis mehet.",
+    z.object({
+      plan_id: z.string(),
+      skip_steps: z.array(z.number().int()).default([]),
+      confirm_warning_steps: z.array(z.number().int()).default([]),
+    }),
+    () => "Jóváhagyott terv végrehajtása",
+    async ({ plan_id, skip_steps, confirm_warning_steps }) => {
+      const { executePlan } = await import("./plans");
+      const plan = await executePlan(plan_id, { skip: skip_steps, confirmed: confirm_warning_steps, by: "chat" });
+      return { title: plan.title, steps: plan.items.map((i) => ({ step: i.id, text: i.text, status: i.status, result: i.result })) };
+    },
+  ),
+];
 
-export const clientTools: Tool[] = tools.map((t) => t.definition);
+const tools: ToolDef[] = [...coreTools, ...metaTools, ...planTools];
+
+const PLAN_NOTE = " (Csak jóváhagyott tervből fut: tedd a propose_changes egyik lépésébe ezzel a tool névvel és ezzel a bemenettel.)";
+
+export const clientTools: Tool[] = tools.map((t) =>
+  PLAN_ONLY.has(t.definition.name) ? { ...t.definition, description: `${t.definition.description ?? ""}${PLAN_NOTE}` } : t.definition,
+);
+
+/** null when the input fits the tool's schema, else the problem (used to check plan steps up front). */
+export function validateToolInput(name: string, input: unknown): string | null {
+  const t = tools.find((x) => x.definition.name === name);
+  if (!t) return `ismeretlen eszköz: ${name}`;
+  const r = t.schema.safeParse(input);
+  return r.success ? null : r.error.issues.map((i) => `${i.path.join(".") || "(bemenet)"}: ${i.message}`).join("; ");
+}
 
 export const serverTools: Anthropic.Beta.Messages.BetaToolUnion[] = [
   { type: "web_search_20260209", name: "web_search", max_uses: 5 },
@@ -613,9 +661,20 @@ export function toolLabel(name: string, input: unknown): string {
   return parsed.success ? t.label(parsed.data as never) : name;
 }
 
-export async function runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string | ToolResultContent; flag?: "confirm" | "refused" }> {
+export async function runTool(
+  name: string,
+  input: unknown,
+  opts: { viaPlan?: boolean } = {},
+): Promise<{ ok: boolean; content: string | ToolResultContent; flag?: "confirm" | "refused" }> {
   const t = tools.find((x) => x.definition.name === name);
   if (!t) return { ok: false, content: `Ismeretlen eszköz: ${name}` };
+  // changes on Meta never run directly – only from a plan the user approved
+  if (PLAN_ONLY.has(name) && !opts.viaPlan) {
+    return {
+      ok: false,
+      content: `A(z) ${name} módosítás, ezért nem futhat jóváhagyás nélkül. Tedd a propose_changes tervbe (tool: "${name}", input: ugyanez), és várd meg, hogy a felhasználó jóváhagyja.`,
+    };
+  }
   const parsed = t.schema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, content: `Érvénytelen bemenet: ${parsed.error.message}` };

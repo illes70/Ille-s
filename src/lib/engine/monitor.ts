@@ -109,20 +109,26 @@ export async function executeAction(action: ProposalAction, accountId?: string):
       undo: before ? { type: "budget", level: "adset", id: action.adsetId, accountId: acc, dailyBudget: before } : undefined,
     };
   }
+  if (action.type === "pause_all") {
+    const { getAdsLive } = await import("../live");
+    const { ads } = await getAdsLive(acc, 0);
+    const items: { level: "ad"; id: string; status: "ACTIVE" }[] = [];
+    for (const ad of ads.filter((a) => a.status === "ACTIVE")) {
+      await provider.setAdStatus(ad.id, "PAUSED");
+      items.push({ level: "ad", id: ad.id, status: "ACTIVE" });
+    }
+    return { text: `${items.length} hirdetés leállítva.`, undo: items.length ? { type: "statuses", accountId: acc, items } : undefined };
+  }
   return { text: "Nincs automatikus lépés – a kreatív frissítést a chatben indítsd." };
 }
 
 /** Which fresh proposals the autopilot may execute without asking. */
-function autoAllowed(p: Proposal, s: Settings): boolean {
-  if (p.action.type === "none") return false;
-  switch (s.autopilot.level) {
-    case "ask":
-      return false;
-    case "bounded":
-      return (p.kind === "pause_ad" && p.severity === "high") || p.kind === "scale_budget";
-    case "full":
-      return true;
-  }
+/**
+ * Nothing on Meta changes without the user's yes: the robot only proposes.
+ * (The autopilot levels of earlier versions are kept in the settings type for old stores.)
+ */
+function autoAllowed(_p: Proposal, _s: Settings): boolean {
+  return false;
 }
 
 /**

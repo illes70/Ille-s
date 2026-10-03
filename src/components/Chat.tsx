@@ -7,6 +7,7 @@ import { ArrowUp, Check, ImagePlus, Loader2, RotateCcw, Sparkles, TriangleAlert,
 import type { ChatTurnEvent, LiveKey, MediaItem } from "@/lib/types";
 import { refreshAll, usePoll } from "./usePoll";
 import { BriefCard } from "./BriefCard";
+import { PendingPlans } from "./PlanCard";
 
 interface Step {
   label: string;
@@ -55,8 +56,13 @@ export function Chat() {
         .catch(() => undefined);
     load();
     const onInvalidate = (e: Event) => (e as CustomEvent<LiveKey[]>).detail.includes("accounts") && !busyRef.current && load();
+    const onReload = () => !busyRef.current && load();
     window.addEventListener("ocp:invalidate", onInvalidate);
-    return () => window.removeEventListener("ocp:invalidate", onInvalidate);
+    window.addEventListener("ocp:chat-reload", onReload);
+    return () => {
+      window.removeEventListener("ocp:invalidate", onInvalidate);
+      window.removeEventListener("ocp:chat-reload", onReload);
+    };
   }, []);
   const busyRef = useRef(false);
   busyRef.current = busy;
@@ -152,6 +158,7 @@ export function Chat() {
       });
       refreshAll();
     }
+    if (e.type === "plan") refreshAll();
   }
 
   async function reset() {
@@ -192,6 +199,9 @@ export function Chat() {
               ))}
             </div>
           )}
+          <div className="mt-6">
+            <PendingPlans />
+          </div>
           <div ref={endRef} />
         </div>
       </div>
@@ -304,6 +314,10 @@ function Welcome({ onPick, company }: { onPick: (t: string) => void; company?: s
 }
 
 function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
+  // approvals by button show as a quiet system note
+  if (m.role === "user" && m.text.startsWith("[OCP]")) {
+    return <p className="mx-auto max-w-[90%] rounded-xl bg-surface-2 px-4 py-2 text-xs whitespace-pre-wrap text-muted">{m.text.replace(/^\[OCP\]\s*/, "")}</p>;
+  }
   if (m.role === "user") {
     return (
       <div className="flex justify-end">

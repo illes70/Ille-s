@@ -76,7 +76,9 @@ export type ProposalKind =
 export type ProposalStatus = "pending" | "approved" | "rejected" | "executed" | "failed";
 
 export interface ProposalAction {
-  type: "set_status" | "set_budget" | "none";
+  /** pause_all: every active ad of accountId (spend cap) */
+  type: "set_status" | "set_budget" | "pause_all" | "none";
+  accountId?: string;
   adId?: string;
   adsetId?: string;
   status?: AdStatus;
@@ -341,10 +343,12 @@ export type LiveEvent =
   | { type: "account"; account: AdAccount }
   | { type: "hello"; at: string };
 
-export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview" | "brief" | "settings";
+export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview" | "brief" | "settings" | "plans";
 
 export interface ChatTurnEvent {
-  type: "text" | "tool_start" | "tool_end" | "error" | "done";
+  type: "text" | "tool_start" | "tool_end" | "error" | "done" | "plan";
+  /** type "plan": a change plan waiting for approval */
+  planId?: string;
   text?: string;
   tool?: string;
   label?: string;

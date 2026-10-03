@@ -3,6 +3,7 @@ import type { Ad, AdAccount, AdStatus, Lead } from "../types";
 import { readStore } from "../store";
 import { adsChanged } from "../live-bus";
 import { currentTenant, envMetaToken } from "../tenant";
+import { pinnedAccount } from "../account-context";
 
 export interface NewAdInput {
   adsetId: string;
@@ -118,7 +119,7 @@ export async function listAccounts(): Promise<AdAccount[]> {
 export async function getProvider(accountId?: string): Promise<AdsProvider> {
   const accounts = await listAccounts();
   if (!accounts.length) throw new Error("Nincs elérhető hirdetési fiók.");
-  const wanted = accountId ?? (await readStore()).activeAccountId ?? process.env.META_AD_ACCOUNT_ID;
+  const wanted = accountId ?? pinnedAccount() ?? (await readStore()).activeAccountId ?? process.env.META_AD_ACCOUNT_ID;
   const account = accounts.find((a) => a.id === wanted) ?? accounts[0];
   let provider: AdsProvider;
   if (await metaConfigured()) {
