@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { completeLogin } from "@/lib/meta/oauth";
 import { logActivity, updateStore } from "@/lib/store";
 import { adsCache } from "@/lib/live-bus";
+import { startFullSync } from "@/lib/live";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
         // fresh start with real data: drop the demo chat history
         d.chats = {};
       },
-      ["accounts", "ads", "leads", "health", "company"],
+      ["accounts", "ads", "leads", "health", "company", "overview"],
     );
     adsCache.clear();
     const subscribed = auth.pages.filter((p) => p.leadgenSubscribed).length;
@@ -31,7 +32,9 @@ export async function GET(req: Request) {
       "action",
       `Facebook csatlakoztatva (${auth.userName}): ${auth.pages.length} oldal, ebből ${subscribed} azonnali leadekkel.`,
     );
-    return Response.redirect(`${url.origin}/settings?meta=connected`, 302);
+    // numbers for every account in ~1-2 s, ads and images stream in after that
+    startFullSync();
+    return Response.redirect(`${url.origin}/overview?connected=1`, 302);
   } catch (err) {
     const msg = encodeURIComponent(err instanceof Error ? err.message : String(err));
     return Response.redirect(`${url.origin}/settings?meta=error&msg=${msg}`, 302);

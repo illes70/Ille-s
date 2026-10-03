@@ -13,6 +13,7 @@ import type {
   MediaItem,
   MetaAuth,
   Proposal,
+  User,
   Recipe,
   Settings,
 } from "./types";
@@ -22,10 +23,12 @@ import { publish } from "./live-bus";
 
 // Single-tenant JSON store for the MVP. Swap for Postgres when OCP goes multi-tenant.
 
-const VERSION = 3;
+const VERSION = 4;
 
 export interface StoreData {
   version: number;
+  /** people who can sign in (the first one to register is the owner) */
+  users: User[];
   settings: Settings;
   /** ad account the UI and the assistant currently work on */
   activeAccountId?: string;
@@ -59,8 +62,9 @@ const state = (g.__ocpStore ??= { cache: null, queue: Promise.resolve() });
 function seed(previous?: Partial<StoreData>): StoreData {
   return {
     version: VERSION,
+    // accounts and a real Meta connection survive demo re-seeds
+    users: previous?.users ?? [],
     settings: structuredClone(demoSettings),
-    // a real Meta connection survives demo re-seeds
     metaAuth: previous?.metaAuth,
     companies: structuredClone(demoCompanies),
     knowledge: structuredClone(knowledgeSeed),

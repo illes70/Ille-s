@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BookOpen, Building2, Inbox, LayoutGrid, Lightbulb, MessageSquare, Settings, Users } from "lucide-react";
+import { Activity, BookOpen, Building2, Gauge, Inbox, LayoutGrid, Lightbulb, LogOut, MessageSquare, Settings, Users } from "lucide-react";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { usePoll } from "./usePoll";
 import { useLiveStatus } from "./live/LiveProvider";
@@ -12,6 +12,7 @@ const GROUPS = [
   {
     title: "Munka",
     items: [
+      { href: "/overview", label: "Áttekintés", icon: Gauge },
       { href: "/", label: "Asszisztens", icon: MessageSquare },
       { href: "/inbox", label: "Javaslatok", icon: Inbox, badge: true },
       { href: "/ads", label: "Hirdetések", icon: LayoutGrid },
@@ -74,6 +75,7 @@ export function Sidebar() {
         ))}
       </nav>
       <ConnectionPill />
+      <UserPill />
     </aside>
   );
 }
@@ -90,5 +92,29 @@ function ConnectionPill() {
         {status === "offline" ? "Újracsatlakozás…" : data.mode === "meta" ? "Élő · Meta" : "Élő · demó adatok"}
       </span>
     </Link>
+  );
+}
+
+function UserPill() {
+  const s = usePoll<{ user: { name: string; email: string } | null }>("/api/auth/status", 600_000);
+  if (!s?.user) return null;
+  return (
+    <div className="mt-2 hidden items-center gap-2 px-1 md:flex">
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-surface-2 text-[11px] font-semibold">{s.user.name.slice(0, 1).toUpperCase()}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium">{s.user.name}</span>
+        <span className="block truncate text-[11px] text-muted">{s.user.email}</span>
+      </span>
+      <button
+        onClick={async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          window.location.href = "/login";
+        }}
+        title="Kilépés"
+        className="rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-fg"
+      >
+        <LogOut size={15} />
+      </button>
+    </div>
   );
 }

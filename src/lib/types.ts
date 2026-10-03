@@ -40,6 +40,8 @@ export interface Creative {
   recipeId?: string;
   /** video ad: imageUrl is the cover frame */
   isVideo?: boolean;
+  /** Meta creative id (images are cached under /api/creative/<id>) */
+  creativeId?: string;
 }
 
 export type LearningStatus = "LEARNING" | "SUCCESS" | "FAIL";
@@ -194,6 +196,15 @@ export interface MetaAuth {
   connectedAt: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  passwordHash: string;
+  role: "owner" | "member";
+  createdAt: string;
+}
+
 export interface MediaItem {
   id: string;
   /** served by OCP: /api/media/<file> */
@@ -227,13 +238,37 @@ export interface Settings {
   };
 }
 
+export interface PeriodTotals {
+  spend: number;
+  leads: number;
+  clicks: number;
+  impressions: number;
+}
+
+/** Headline numbers of one ad account (overview of all accounts). */
+export interface AccountSummary {
+  accountId: string;
+  today: PeriodTotals;
+  last7: PeriodTotals;
+  activeAds: number;
+  error?: string;
+}
+
+export interface SyncState {
+  running: boolean;
+  done: number;
+  total: number;
+  current?: string;
+}
+
 /** Pushed from the server to every open browser over /api/live (SSE). */
 export type LiveEvent =
   | { type: "invalidate"; keys: LiveKey[] }
   | { type: "lead"; lead: Lead; accountName?: string }
+  | { type: "sync"; sync: SyncState }
   | { type: "hello"; at: string };
 
-export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health";
+export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview";
 
 export interface ChatTurnEvent {
   type: "text" | "tool_start" | "tool_end" | "error" | "done";

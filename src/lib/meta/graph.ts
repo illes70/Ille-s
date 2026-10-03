@@ -1,14 +1,17 @@
 import "server-only";
-import type { Ad, AdAccount, AdStatus, DailyPoint, LearningStatus, Lead, MetaPage } from "../types";
+import type { AccountSummary, Ad, AdAccount, AdStatus, DailyPoint, LearningStatus, Lead, MetaPage } from "../types";
 import { readStore } from "../store";
 import { loadImage } from "../creative/media";
+import { creativeImageUrl, registerCreativeSource } from "../creative/creative-images";
 import type { AdsProvider, CreativeUpdate, LeadFormInput, NewAdInput } from "./provider";
 
 // Meta Marketing API (Graph) implementation.
 // Budgets are sent in the currency's minor unit (Meta uses offset 100 for HUF, EUR, USD...).
 
 export const GRAPH_VERSION = process.env.META_GRAPH_VERSION ?? "v24.0";
-const BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+/** overridable only for tests against a local Graph mock */
+const ROOT = process.env.META_GRAPH_BASE ?? "https://graph.facebook.com";
+const BASE = `${ROOT}/${GRAPH_VERSION}`;
 const OFFSET = Number(process.env.META_CURRENCY_OFFSET ?? 100);
 /** creative previews are requested at this size so they look sharp at full width */
 const THUMB = 1080;
@@ -106,6 +109,65 @@ export async function all<T>(p: string, params: Record<string, unknown>, max = 5
   return out;
 }
 
+/**
+ * Graph Batch API: up to 50 requests in one HTTP call. This is what makes the first
+ * screen after connecting fast – every account's numbers in one round trip.
+ */
+export async function graphBatch<T>(relativeUrls: string[]): Promise<({ ok: true; body: T } | { ok: false; error: string })[]> {
+  const token = await metaToken();
+  if (!token) throw new MetaApiError("Nincs Meta-kapcsolat.", 190, hintFor(190));
+  const out: ({ ok: true; body: T } | { ok: false; error: string })[] = [];
+  for (let i = 0; i < relativeUrls.length; i += 50) {
+    const chunk = relativeUrls.slice(i, i + 50);
+    const res = await fetch(`${ROOT}/`, {
+      method: "POST",
+      body: new URLSearchParams({
+        access_token: token,
+        include_headers: "false",
+        batch: JSON.stringify(chunk.map((u) => ({ method: "GET", relative_url: `${GRAPH_VERSION}/${u}` }))),
+      }),
+    });
+    const json = (await res.json()) as ({ code: number; body: string } | null)[] | { error?: GraphError };
+    if (!Array.isArray(json)) {
+      const e = json.error;
+      throw new MetaApiError(`Meta API hiba: ${e?.message ?? res.statusText}`, e?.code, hintFor(e?.code, e?.error_subcode));
+    }
+    for (const r of json) {
+      if (!r) out.push({ ok: false, error: "nincs válasz" });
+      else if (r.code === 200) out.push({ ok: true, body: JSON.parse(r.body) as T });
+      else out.push({ ok: false, error: (JSON.parse(r.body) as { error?: GraphError }).error?.message ?? `HTTP ${r.code}` });
+    }
+  }
+  return out;
+}
+
+/** Today + last 7 days + active ad count for every account: 3 requests per account, batched. */
+export async function metaAccountSummaries(accountIds: string[]): Promise<AccountSummary[]> {
+  const fields = "spend,impressions,clicks,actions";
+  const urls = accountIds.flatMap((id) => [
+    `${id}/insights?fields=${fields}&date_preset=today`,
+    `${id}/insights?fields=${fields}&date_preset=last_7d`,
+    `${id}/ads?effective_status=${encodeURIComponent('["ACTIVE"]')}&limit=0&summary=total_count`,
+  ]);
+  type Ins = { data: { spend?: string; impressions?: string; clicks?: string; actions?: GraphAction[] }[] };
+  const res = await graphBatch<Ins & { summary?: { total_count?: number } }>(urls);
+  const pick = (r: (typeof res)[number]) => {
+    const d = r.ok ? (r.body.data[0] ?? {}) : {};
+    return { spend: Number(d.spend ?? 0), leads: leadCount(d.actions), clicks: Number(d.clicks ?? 0), impressions: Number(d.impressions ?? 0) };
+  };
+  return accountIds.map((accountId, i) => {
+    const [t, w, a] = res.slice(i * 3, i * 3 + 3);
+    const failed = [t, w].find((r) => !r.ok) as { error: string } | undefined;
+    return {
+      accountId,
+      today: pick(t),
+      last7: pick(w),
+      activeAds: a.ok ? (a.body.summary?.total_count ?? 0) : 0,
+      error: failed?.error,
+    };
+  });
+}
+
 interface GraphAction {
   action_type: string;
   value: string;
@@ -113,7 +175,16 @@ interface GraphAction {
 
 interface StorySpec {
   page_id?: string;
-  link_data?: { message?: string; name?: string; picture?: string; image_hash?: string; link?: string; call_to_action?: { type?: string; value?: Record<string, string> } };
+  link_data?: {
+    message?: string;
+    name?: string;
+    picture?: string;
+    image_hash?: string;
+    link?: string;
+    call_to_action?: { type?: string; value?: Record<string, string> };
+    /** carousel cards */
+    child_attachments?: { image_hash?: string; picture?: string; name?: string }[];
+  };
   video_data?: { message?: string; title?: string; image_url?: string; video_id?: string; call_to_action?: { type?: string } };
 }
 
@@ -121,12 +192,13 @@ interface GraphCreative {
   id?: string;
   title?: string;
   body?: string;
+  image_hash?: string;
   image_url?: string;
   thumbnail_url?: string;
   call_to_action_type?: string;
   object_type?: string;
   object_story_spec?: StorySpec;
-  asset_feed_spec?: { bodies?: { text: string }[]; titles?: { text: string }[]; images?: { url?: string }[] };
+  asset_feed_spec?: { bodies?: { text: string }[]; titles?: { text: string }[]; images?: { url?: string; hash?: string }[] };
 }
 
 interface GraphAd {
@@ -211,7 +283,7 @@ export class MetaGraphProvider implements AdsProvider {
       "created_time",
       "adset{id,name,daily_budget,learning_stage_info}",
       "campaign{id,name,daily_budget}",
-      `creative.thumbnail_width(${THUMB}).thumbnail_height(${THUMB}){id,title,body,image_url,thumbnail_url,call_to_action_type,object_type,object_story_spec,asset_feed_spec}`,
+      `creative.thumbnail_width(${THUMB}).thumbnail_height(${THUMB}){id,title,body,image_hash,image_url,thumbnail_url,call_to_action_type,object_type,object_story_spec,asset_feed_spec}`,
       "insights.date_preset(last_7d){spend,impressions,reach,frequency,clicks,ctr,cpm,actions}",
     ].join(",");
     const [ads, daily] = await Promise.all([
@@ -251,6 +323,11 @@ export class MetaGraphProvider implements AdsProvider {
     const c = a.creative ?? {};
     const story = c.object_story_spec;
     const isVideo = c.object_type === "VIDEO" || !!story?.video_data;
+    const firstCard = story?.link_data?.child_attachments?.[0];
+    // the best original we can get: uploaded image (by hash) > video cover > 1080px rendering
+    const hash = isVideo ? undefined : (c.image_hash ?? story?.link_data?.image_hash ?? firstCard?.image_hash ?? c.asset_feed_spec?.images?.[0]?.hash);
+    const direct = (isVideo ? story?.video_data?.image_url : undefined) ?? c.thumbnail_url ?? c.image_url ?? firstCard?.picture ?? c.asset_feed_spec?.images?.[0]?.url;
+    if (c.id) registerCreativeSource(c.id, { accountId: this.account.id, hash, url: direct });
     return {
       id: a.id,
       accountId: this.account.id,
@@ -267,8 +344,9 @@ export class MetaGraphProvider implements AdsProvider {
         headline: c.title ?? story?.link_data?.name ?? story?.video_data?.title ?? c.asset_feed_spec?.titles?.[0]?.text ?? a.name,
         primaryText: c.body ?? story?.link_data?.message ?? story?.video_data?.message ?? c.asset_feed_spec?.bodies?.[0]?.text ?? "",
         cta: c.call_to_action_type ?? story?.link_data?.call_to_action?.type ?? "LEARN_MORE",
-        // full-size image when Meta has it, otherwise the 1080px rendering of the ad
-        imageUrl: (isVideo ? story?.video_data?.image_url : c.image_url) ?? c.thumbnail_url ?? c.asset_feed_spec?.images?.[0]?.url,
+        // stable OCP URL: the original is downloaded once and cached (Meta links expire)
+        imageUrl: c.id && (hash || direct) ? creativeImageUrl(c.id) : direct,
+        creativeId: c.id,
         isVideo,
       },
       metrics: {

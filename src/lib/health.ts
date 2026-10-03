@@ -157,16 +157,16 @@ function finish(checks: HealthCheck[], origin: string) {
   const publicUrl = process.env.OCP_PUBLIC_URL ?? origin;
   const local = /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(publicUrl);
 
-  // access protection: a public OCP without a password would let anyone run the ad accounts
+  // access protection: everything sits behind sign-in; the session key must be stable on servers
   checks.push(
-    process.env.OCP_PASSWORD
-      ? { id: "auth", label: "Belépés védelme", status: "ok", detail: "Jelszóval védve." }
+    process.env.OCP_SECRET || local
+      ? { id: "auth", label: "Belépés védelme", status: "ok", detail: "Minden oldal belépéshez kötött." }
       : {
           id: "auth",
           label: "Belépés védelme",
-          status: local ? "warn" : "error",
-          detail: local ? "Nincs jelszó – a saját gépeden ez rendben van." : "Az OCP nyilvános címen fut jelszó nélkül: bárki kezelhetné a hirdetéseidet!",
-          fix: { text: "Állíts be egy erős OCP_PASSWORD-öt a környezeti változók között, és indítsd újra." },
+          status: "warn",
+          detail: "Nincs OCP_SECRET – több szerveres vagy újratelepített környezetben a belépések elveszhetnek.",
+          fix: { text: "Állíts be egy hosszú, véletlen OCP_SECRET értéket a környezeti változók között." },
         },
   );
   const verify = !!process.env.META_VERIFY_TOKEN;

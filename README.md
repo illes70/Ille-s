@@ -2,12 +2,20 @@
 
 AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli helyetted. Figyel, javasol, és amit kérsz, megcsinálja, így az Ads Managert nem kell megnyitnod.
 
-## Mit tud most (v0.3)
+## Mit tud most (v0.4)
+
+**Regisztráció → egy gomb → minden fiók.** Regisztrálsz (e-mail + jelszó), az Áttekintés oldalon rányomsz a **Csatlakozás Facebookkal** gombra, és visszatérés után:
+1. **1–2 másodperc:** minden hirdetési fiókod a mai és 7 napos számokkal (egyetlen Meta *batch* kérés, akár 50 fiók egyszerre).
+2. **Utána, élő haladásjelzővel:** fiókonként a hirdetések, a 90 napos napi adatok és a kreatívok képei.
+3. **Onnantól:** a háttérfigyelő percenként frissít minden fiókot, a leadek webhookon másodpercek alatt jönnek.
+
+**A Metán futó képek.** Csatlakozás után nincs teendő: az OCP a Meta API-ból behúzza minden hirdetés képét. Mivel a Meta képlinkjei lejárnak, az OCP az **eredeti, teljes felbontású** képet egyszer letölti és eltárolja (`/api/creative/<id>`): képes hirdetésnél a feltöltött eredetit (kép-hash alapján), videónál a borítót, karusszelnél az első kártyát. A Meta kreatívjai nem változnak, így a tárolt kép mindig érvényes.
 
 **Minden élő.** A szerver figyeli a Metát, és a változást azonnal kiküldi a böngészőnek (Server-Sent Events). Új lead esetén a szám rögtön átvált (animálva), és jobb felül megjelenik az értesítés. A leadek webhookon másodpercek alatt jönnek; a költés/megjelenés a Metánál is néhány perc késéssel frissül – az OCP alapból percenként kérdezi (`META_POLL_SECONDS`), és kiírja, mikor frissült utoljára.
 
 | Oldal | Mire jó |
 |---|---|
+| **Áttekintés** (`/overview`) | Minden hirdetési fiók egy képernyőn, élő mai és 7 napos számokkal. Kattintásra az adott fiók hirdetései. |
 | **Asszisztens** (`/`) | Cégenkénti chat. Hirdetések elemzése, leállítás/indítás, büdzsé, új hirdetések tömegesen, kép- és szövegcsere futó hirdetésen, hirdetéskép készítése, instant form, leadek, webes kutatás. Képet behúzhatsz, beilleszthetsz vagy csatolhatsz. |
 | **Javaslatok** (`/inbox`) | Amit az asszisztens magától csinálna – „Mehet” → végrehajtja. |
 | **Hirdetések** (`/ads`) | Szűrők, időszak, KPI-k (élő számok), grafikon, lead-tölcsér, kreatívok **valódi, teljes képpel** (1080 px, videónál borítókép), csoportonként vagy listában. Részletnézet: napi grafikon, leállítás, Ads Manager link. |
@@ -41,6 +49,8 @@ npm install
 cp .env.example .env.local
 npm run dev                  # http://localhost:3000
 ```
+
+Első indításkor a `/register` oldalon hozd létre a fiókodat (az első regisztráló a tulajdonos, utána a regisztráció zárva; `OCP_ALLOW_SIGNUP=1` nyitva hagyja). Szerveren állíts be egy hosszú, véletlen `OCP_SECRET`-et.
 
 Kulcsok nélkül az OCP **demó módban** fut (két kitalált cég, szimulált élő költés és leadek) – így minden kipróbálható.
 

@@ -1,6 +1,6 @@
 import "server-only";
-import type { Ad, DailyPoint, Lead } from "./types";
-import { getLeads, getProvider } from "./meta/provider";
+import type { AccountSummary, Ad, AdAccount, DailyPoint, Lead, SyncState } from "./types";
+import { getLeads, getProvider, listAccounts } from "./meta/provider";
 import { adsCache, listenerCount, publish } from "./live-bus";
 import { logActivity, newId, readStore, updateStore } from "./store";
 
@@ -19,14 +19,24 @@ interface Snapshot {
   signature: string;
 }
 
+export interface Overview {
+  mode: "demo" | "meta";
+  rows: { account: AdAccount; summary: AccountSummary }[];
+  fetchedAt: string;
+  signature: string;
+}
+
 interface LiveState {
   inflight: Map<string, Promise<Snapshot>>;
   timer?: ReturnType<typeof setInterval>;
   seenLeads?: Set<string>;
   ticking?: boolean;
+  overview?: Overview;
+  overviewJob?: Promise<Overview>;
+  sync: SyncState;
 }
 const g = globalThis as unknown as { __ocpLive?: LiveState };
-const state: LiveState = (g.__ocpLive ??= { inflight: new Map() });
+const state: LiveState = (g.__ocpLive ??= { inflight: new Map(), sync: { running: false, done: 0, total: 0 } });
 const cache = adsCache as Map<string, Snapshot>;
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -109,6 +119,104 @@ export async function ingestLead(lead: Lead, source: "webhook" | "poll") {
   await logActivity("system", "lead", `Új lead${source === "poll" ? "" : " (azonnal)"}: ${lead.name}${lead.city ? `, ${lead.city}` : ""} – ${lead.formName}`);
 }
 
+// ---------- all accounts at a glance ----------
+
+function emptyTotals() {
+  return { spend: 0, leads: 0, clicks: 0, impressions: 0 };
+}
+
+/** Demo: the same numbers computed from the demo ads. */
+async function demoSummaries(accounts: AdAccount[]): Promise<AccountSummary[]> {
+  const { ads } = await readStore();
+  const t = today();
+  return accounts.map((acc) => {
+    const mine = ads.filter((a) => a.accountId === acc.id);
+    const s: AccountSummary = { accountId: acc.id, today: emptyTotals(), last7: emptyTotals(), activeAds: mine.filter((a) => a.status === "ACTIVE").length };
+    for (const ad of mine) {
+      for (const d of ad.daily.slice(-7)) {
+        const into = [s.last7, ...(d.date === t ? [s.today] : [])];
+        for (const x of into) {
+          x.spend += d.spend;
+          x.leads += d.leads;
+          x.clicks += d.clicks;
+          x.impressions += d.impressions;
+        }
+      }
+    }
+    return s;
+  });
+}
+
+async function fetchOverview(): Promise<Overview> {
+  if (state.overviewJob) return state.overviewJob;
+  const job = (async () => {
+    const accounts = await listAccounts();
+    const mode = (await getProvider()).mode;
+    const summaries =
+      mode === "meta" ? await import("./meta/graph").then((m) => m.metaAccountSummaries(accounts.map((a) => a.id))) : await demoSummaries(accounts);
+    const rows = accounts.map((account, i) => ({ account, summary: summaries[i] }));
+    const signature = JSON.stringify(summaries);
+    const ov: Overview = { mode, rows, fetchedAt: new Date().toISOString(), signature };
+    state.overview = ov;
+    return ov;
+  })().finally(() => (state.overviewJob = undefined));
+  state.overviewJob = job;
+  return job;
+}
+
+/** Headline numbers of every ad account (one batched Meta call), from cache when fresh. */
+export async function getOverview(maxAgeMs = 30_000) {
+  const ov = state.overview && Date.now() - new Date(state.overview.fetchedAt).getTime() < maxAgeMs ? state.overview : await fetchOverview();
+  return { ...ov, sync: state.sync };
+}
+
+function setSync(sync: SyncState) {
+  state.sync = sync;
+  publish({ type: "sync", sync });
+}
+
+/**
+ * Right after connecting: overview first (seconds), then every account's ads and
+ * creative images in the background, with progress pushed to the browser.
+ */
+export function startFullSync() {
+  if (state.sync.running) return;
+  void (async () => {
+    try {
+      const accounts = await listAccounts();
+      setSync({ running: true, done: 0, total: accounts.length });
+      await fetchOverview();
+      publish({ type: "invalidate", keys: ["overview", "accounts"] });
+
+      const { warmCreativeImages } = await import("./creative/creative-images");
+      const queue = [...accounts];
+      let done = 0;
+      await Promise.all(
+        Array.from({ length: 3 }, async () => {
+          for (let acc = queue.shift(); acc; acc = queue.shift()) {
+            setSync({ running: true, done, total: accounts.length, current: acc.name });
+            try {
+              const snap = await fetchSnapshot(acc.id);
+              publish({ type: "invalidate", keys: ["ads"] });
+              await warmCreativeImages(snap.ads.flatMap((a) => (a.creative.creativeId ? [a.creative.creativeId] : [])));
+            } catch (err) {
+              console.error("[ocp sync]", acc.id, err);
+            }
+            done++;
+            setSync({ running: true, done, total: accounts.length });
+          }
+        }),
+      );
+      await logActivity("system", "action", `Szinkron kész: ${accounts.length} hirdetési fiók, minden hirdetés és kép betöltve.`);
+    } catch (err) {
+      await logActivity("system", "error", `Szinkron hiba: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSync({ ...state.sync, running: false, current: undefined });
+      publish({ type: "invalidate", keys: ["overview", "ads"] });
+    }
+  })();
+}
+
 // ---------- background poller ----------
 
 export function ensureLivePoller() {
@@ -127,13 +235,19 @@ async function tick() {
   try {
     const provider = await getProvider();
     const id = provider.account.id;
-    if (provider.mode === "demo") await simulateDemo(id);
-    else if (Date.now() - lastMetaPoll < META_POLL_MS) return;
+    if (provider.mode === "demo") {
+      for (const acc of await listAccounts()) await simulateDemo(acc.id);
+    } else if (Date.now() - lastMetaPoll < META_POLL_MS) return;
     lastMetaPoll = Date.now();
 
     const before = cache.get(id)?.signature;
     const snap = await fetchSnapshot(id);
     if (snap.signature !== before) publish({ type: "invalidate", keys: ["ads"] });
+
+    // every account's headline numbers: one batched call
+    const prev = state.overview?.signature;
+    const ov = await fetchOverview();
+    if (ov.signature !== prev) publish({ type: "invalidate", keys: ["overview"] });
 
     if (provider.mode === "meta") await pollLeads();
   } catch (err) {

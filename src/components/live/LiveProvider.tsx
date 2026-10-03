@@ -22,12 +22,13 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       es.onopen = () => {
         setStatus("live");
         // after a drop, everything might be stale
-        if (wasOffline) invalidate(["ads", "leads", "activity", "proposals", "accounts"]);
+        if (wasOffline) invalidate(["ads", "leads", "activity", "proposals", "accounts", "overview"]);
         wasOffline = false;
       };
       es.onmessage = (msg) => {
         const e = JSON.parse(msg.data) as LiveEvent;
         if (e.type === "invalidate") invalidate(e.keys);
+        if (e.type === "sync") window.dispatchEvent(new CustomEvent("ocp:sync", { detail: e.sync }));
         if (e.type === "lead") {
           window.dispatchEvent(new CustomEvent<{ lead: Lead; accountName?: string }>("ocp:lead", { detail: e }));
           invalidate(["leads", "ads", "activity"]);

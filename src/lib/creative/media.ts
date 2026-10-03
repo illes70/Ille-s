@@ -30,6 +30,11 @@ export async function saveMedia(
 
 /** Bytes of an OCP media URL (/api/media/…) or any public image URL. */
 export async function loadImage(url: string): Promise<{ bytes: Buffer; mime: string }> {
+  const creative = url.match(/^\/api\/creative\/(\d+)$/);
+  if (creative) {
+    const { getCreativeImage } = await import("./creative-images");
+    return getCreativeImage(creative[1]);
+  }
   const local = url.match(/^\/api\/media\/([\w.-]+)$/);
   if (local) {
     const ext = local[1].split(".").pop()!.toLowerCase();
