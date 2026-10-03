@@ -2,7 +2,25 @@
 
 AI hirdetéskezelő: a Meta hirdetési fiókodat egy chat-asszisztens kezeli helyetted. Figyel, javasol, és amit kérsz, megcsinálja, így az Ads Managert nem kell megnyitnod.
 
-## Mit tud most (v0.4)
+## Mit tud most (v0.5)
+
+**Az asszisztens = tapasztalt Meta-hirdetéskezelő + ajánlatstratéga.** Mindent meg tud csinálni chatből, amit egy leadgeneráló hirdető az Ads Managerben csinál:
+- **Elemzés:** fiókállapot (fizetés, költési korlát, elutasított hirdetések okkal, Pixel), teljes kampánystruktúra érthetően, bontások (kor, nem, elhelyezés, régió, eszköz, napszak), Hirdetéstár (versenytársak, 30+ napja futó nyerők).
+- **Építés:** kampány (cél, speciális kategória, CBO/ABO, licitstratégia, költési korlát) → hirdetéscsoport (optimalizálás, instant űrlap / weboldal / Messenger / WhatsApp / hívás, célzás, Advantage+ közönség és elhelyezések, ütemezés, attribúció, EU-s DSA) → hirdetések (kép, karusszel, videó, UTM, Instagram-profil, Advantage+ kreatív be/ki) → instant űrlap (magasabb szándék, feleletválasztós minősítő kérdés, köszönőoldal hívás-gombbal).
+- **Közönségek:** célzáskeresés, közönségméret-becslés, egyéni közönség (weboldal, űrlapot megnyitók, oldal-/Instagram-aktívak, **ügyféllista az OCP megnyert leadjeiből**, hash-elve), hasonmás közönség.
+- **Módosítás:** státusz és büdzsé minden szinten, célzás, másolás (kampány / csoport / hirdetés), kreatívcsere.
+- **Tudás:** a tudásbázisban egy részletes Meta funkciókalauz (célok, konverziós helyek, űrlapok, büdzsé, licit, célzás, elhelyezések és méretek, formátumok, speciális kategóriák és EU-szabályok, irányelvek, mérés, tesztelés, struktúra, szállítási problémák, retargeting, fiókegészség) és Hormozi-féle ajánlatépítés – a saját tapasztalataid ezeket felülírják.
+
+**Szakmai fék – kódban, nem csak a promptban.** A módosító eszközök kockázatos lépésnél nem hajtanak végre semmit:
+- *Megerősítést kér* („szerintem ez nem jó ötlet, mert…”): tanulási fázis közbeni szerkesztés, 30% feletti büdzséugrás, a csoport egyetlen/legjobb hirdetésének leállítása, túl kicsi büdzsé vagy közönség, egyetlen elhelyezés, leadhez kattintás-optimalizálás, rossz kampánycél, cost cap mérés nélkül, aprózott büdzsé, gyanús speciális kategória.
+- *Megtagadja*: személyes tulajdonságra utaló szöveg („Szenvedsz…?”, „Adósságod van?”), politikai hirdetés, speciális kategóriás kampány tiltott célzása (kor/nem/kis sugár), a megadott emelési keret túllépése, ha nem a felhasználó mondta az összeget.
+
+**Új ügyfél = nulla beállítás.** Ha egy ügyfél hozzáférést ad, az OCP 5 percen belül magától észreveszi, értesít, kitölti a cégprofilt a Facebook-oldalról (név, telefon, weboldal, cím, logó, Instagram), és behúzza a hirdetéseket és képeket. A Business Managerben látható, de még hozzád nem rendelt ügyfélfiókoknál az Áttekintésen egy gomb: **Hozzáférés beállítása**.
+
+**Előnézet:** a hirdetés részletnézetében a Meta saját előnézete Facebook / Instagram / Story / Reels formában.
+
+### Korábbi verziók
+
 
 **Regisztráció → egy gomb → minden fiók.** Regisztrálsz (e-mail + jelszó), az Áttekintés oldalon rányomsz a **Csatlakozás Facebookkal** gombra, és visszatérés után:
 1. **1–2 másodperc:** minden hirdetési fiókod a mai és 7 napos számokkal (egyetlen Meta *batch* kérés, akár 50 fiók egyszerre).
@@ -78,6 +96,10 @@ src/
     meta/              AdsProvider → demo.ts | graph.ts (Meta Marketing API), oauth.ts (Facebook Login)
     live.ts, live-bus  élő réteg: szerveroldali cache, háttérfigyelő, SSE push, lead-egyeztetés
     creative/          sablonos hirdetéskép (next/og), AI fotó (OpenAI), médiatár, Claude Files
+    meta/manage.ts     Ads Manager-szintű műveletek (struktúra, bontás, célzás, létrehozás, közönségek, videó, előnézet)
+    meta/advisor.ts    szakmai fék: szöveg-ellenőrzés, speciális kategóriák, kockázatfelmérés
+    agent/tools-meta.ts  az asszisztens Meta-eszközei
+    knowledge-meta.ts  Meta funkciókalauz (tudásbázis)
     health.ts          rendszerállapot + javítások
     company.ts         cégprofil, tudásbázis-keresés
     store.ts           egyszerű JSON tároló (.data/) – MVP, egy felhasználó

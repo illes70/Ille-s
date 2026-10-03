@@ -9,11 +9,21 @@ export interface NewAdInput {
   headline: string;
   primaryText: string;
   cta: string;
-  /** public image URL; if omitted, `reuseImageFromAdId` is used */
+  /** image (default), carousel (2–10 cards) or video */
+  format?: "image" | "carousel" | "video";
+  description?: string;
+  /** public or OCP image URL; if omitted, `reuseImageFromAdId` is used */
   imageUrl?: string;
   reuseImageFromAdId?: string;
+  cards?: { imageUrl?: string; reuseImageFromAdId?: string; headline: string; description?: string; link?: string }[];
+  /** Meta video id (upload_video) */
+  videoId?: string;
   linkUrl?: string;
   leadFormId?: string;
+  /** UTM parameters, e.g. utm_source=facebook&utm_medium=paid&utm_campaign={{campaign.name}} */
+  urlTags?: string;
+  /** Advantage+ creative features: { text_optimizations: "OPT_OUT", ... } */
+  creativeFeatures?: Record<string, "OPT_IN" | "OPT_OUT">;
   recipeId?: string;
   activate: boolean;
 }
@@ -25,13 +35,22 @@ export interface CreativeUpdate {
   imageUrl?: string;
 }
 
+export type PrefillField = "FULL_NAME" | "FIRST_NAME" | "LAST_NAME" | "EMAIL" | "PHONE" | "CITY" | "ZIP" | "STREET_ADDRESS" | "COMPANY_NAME" | "JOB_TITLE";
+
 export interface LeadFormInput {
   name: string;
-  intro: string;
-  questions: ("FULL_NAME" | "PHONE" | "EMAIL" | "CITY")[];
-  customQuestion?: string;
+  /** context card: one paragraph or bullet points */
+  intro: string[];
+  introTitle?: string;
+  introStyle?: "PARAGRAPH_STYLE" | "LIST_STYLE";
+  questions: (PrefillField | { label: string; options?: string[] })[];
+  /** "higher intent": review step before submit – fewer, better leads */
+  higherIntent?: boolean;
   privacyUrl: string;
+  thankYouTitle?: string;
   thankYou: string;
+  thankYouButton?: { type: "VIEW_WEBSITE" | "CALL_BUSINESS"; text: string; url?: string; phone?: string };
+  locale?: string;
 }
 
 /** Everything OCP can do on an ad platform. Demo and Meta Graph both implement this. */
@@ -56,10 +75,31 @@ export async function metaConfigured(): Promise<boolean> {
   return !!(process.env.META_ACCESS_TOKEN || (await readStore()).metaAuth?.token);
 }
 
+// every request needs the account list: keep it for a minute instead of asking Meta each time
+const g = globalThis as unknown as { __ocpAccounts?: { at: number; list: AdAccount[]; job?: Promise<AdAccount[]> } };
+
+export function invalidateAccounts() {
+  g.__ocpAccounts = undefined;
+}
+
 export async function listAccounts(): Promise<AdAccount[]> {
   if (await metaConfigured()) {
+    const c = g.__ocpAccounts;
+    if (c && Date.now() - c.at < 60_000) return c.list;
+    if (c?.job) return c.job;
     const { listMetaAccounts } = await import("./graph");
-    return listMetaAccounts();
+    const job = listMetaAccounts();
+    g.__ocpAccounts = { at: c?.at ?? 0, list: c?.list ?? [], job };
+    try {
+      const list = await job;
+      g.__ocpAccounts = { at: Date.now(), list };
+      return list;
+    } catch (err) {
+      g.__ocpAccounts = c ? { ...c, job: undefined } : undefined;
+      // keep serving the last good list rather than breaking every page
+      if (c?.list.length) return c.list;
+      throw err;
+    }
   }
   const { demoAccounts } = await import("../demo-data");
   return demoAccounts;

@@ -6,8 +6,23 @@ import { DATA_DIR, newId, updateStore } from "../store";
 
 export const MEDIA_DIR = path.join(DATA_DIR, "media");
 
-const EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" };
-export const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+const EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+};
+export const MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+};
 
 export async function saveMedia(
   bytes: Buffer,
@@ -15,7 +30,7 @@ export async function saveMedia(
   meta: Pick<MediaItem, "kind"> & Partial<Pick<MediaItem, "prompt" | "accountId">>,
 ): Promise<MediaItem> {
   const ext = EXT[mime];
-  if (!ext) throw new Error(`Nem támogatott képformátum: ${mime}`);
+  if (!ext) throw new Error(`Nem támogatott formátum: ${mime} (kép: JPG/PNG/WebP, videó: MP4/MOV)`);
   const id = newId("img");
   const file = `${id}.${ext}`;
   await fs.mkdir(MEDIA_DIR, { recursive: true });

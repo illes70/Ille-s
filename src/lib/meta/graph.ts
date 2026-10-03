@@ -235,6 +235,59 @@ export async function listMetaAccounts(): Promise<AdAccount[]> {
   return rows.filter((r) => r.account_status === 1 || r.account_status === 3).map((r) => ({ id: r.id, name: r.name, currency: r.currency }));
 }
 
+export interface PendingAccount {
+  id: string;
+  name: string;
+  currency: string;
+  businessId: string;
+  businessName: string;
+}
+
+/**
+ * Ad accounts a Business Manager the user belongs to owns or manages for a client,
+ * that the user isn't assigned to yet (so /me/adaccounts doesn't list them).
+ */
+export async function discoverBusinessAccounts(known: Set<string>): Promise<PendingAccount[]> {
+  const businesses = await all<{ id: string; name: string }>("me/businesses", { fields: "id,name", limit: "50" }, 100).catch(() => []);
+  const found = new Map<string, PendingAccount>();
+  for (const b of businesses) {
+    for (const edge of ["owned_ad_accounts", "client_ad_accounts"]) {
+      const rows = await all<{ id: string; name: string; account_status: number; currency: string }>(
+        `${b.id}/${edge}`,
+        { fields: "id,name,account_status,currency", limit: "200" },
+        1000,
+      ).catch(() => []);
+      for (const r of rows) {
+        if (known.has(r.id) || found.has(r.id) || !(r.account_status === 1 || r.account_status === 3)) continue;
+        found.set(r.id, { id: r.id, name: r.name, currency: r.currency, businessId: b.id, businessName: b.name });
+      }
+    }
+  }
+  return [...found.values()];
+}
+
+/** Business Manager page where the user can assign themselves to the ad account. */
+export const assignLink = (accountId: string, businessId: string) =>
+  `https://business.facebook.com/settings/ad-accounts/${accountId.replace(/^act_/, "")}?business_id=${businessId}`;
+
+/** Try to assign the signed-in user to a Business Manager ad account (needs BM admin). */
+export async function claimAccount(accountId: string, businessId: string) {
+  const me = await graph<{ id: string; name: string }>("me", { params: { fields: "id,name" } });
+  const users = await all<{ id: string; name: string }>(`${businessId}/business_users`, { fields: "id,name", limit: "200" }, 1000).catch(() => []);
+  const mine = users.filter((u) => u.name === me.name);
+  if (mine.length !== 1) {
+    throw new MetaApiError(
+      "Nem tudom automatikusan hozzárendelni a fiókot.",
+      undefined,
+      `Nyisd meg a Business Managerben (${assignLink(accountId, businessId)}), kattints a „Személyek hozzáadása” gombra, válaszd ki magad „Teljes hozzáférés” joggal, majd itt nyomd meg a Frissítés gombot.`,
+    );
+  }
+  await graph(`${accountId}/assigned_users`, {
+    method: "POST",
+    params: { user: mine[0].id, tasks: ["MANAGE", "ADVERTISE", "ANALYZE"], business: businessId },
+  });
+}
+
 /** Page tokens: from the Facebook Login connection, else from /me/accounts with the env token. */
 export async function metaPages(): Promise<MetaPage[]> {
   const auth = (await readStore()).metaAuth;
@@ -397,34 +450,49 @@ export class MetaGraphProvider implements AdsProvider {
 
   async createAd(input: NewAdInput) {
     const page = await this.page();
-    const image_hash = await this.imageHash(input);
-    const callToAction = input.leadFormId
+    const company = (await readStore()).companies[this.account.id];
+    const link = input.linkUrl ?? company?.website ?? "https://fb.me/";
+    const cta = input.leadFormId
       ? { type: input.cta, value: { lead_gen_form_id: input.leadFormId } }
-      : { type: input.cta, value: { link: input.linkUrl } };
+      : { type: input.cta, value: { link } };
+    const format = input.format ?? (input.cards?.length ? "carousel" : input.videoId ? "video" : "image");
+
+    let spec: Record<string, unknown>;
+    if (format === "carousel") {
+      if (!input.cards || input.cards.length < 2) throw new Error("Karusszelhez legalább 2 kártya kell.");
+      const cards = [];
+      for (const c of input.cards.slice(0, 10)) {
+        cards.push({ link: c.link ?? link, image_hash: await this.imageHash(c), name: c.headline, description: c.description, call_to_action: cta });
+      }
+      spec = { link_data: { link, message: input.primaryText, child_attachments: cards, multi_share_optimized: true, call_to_action: cta } };
+    } else if (format === "video") {
+      if (!input.videoId) throw new Error("Videós hirdetéshez előbb töltsd fel a videót (upload_video), és add meg a video_id-t.");
+      const thumbs = await graph<{ data: { uri: string; is_preferred?: boolean }[] }>(`${input.videoId}/thumbnails`).catch(() => ({ data: [] }));
+      const cover = input.imageUrl ? { image_hash: await this.uploadImage(input.imageUrl) } : { image_url: (thumbs.data.find((t) => t.is_preferred) ?? thumbs.data[0])?.uri };
+      spec = { video_data: { video_id: input.videoId, ...cover, title: input.headline, message: input.primaryText, link_description: input.description, call_to_action: cta } };
+    } else {
+      spec = { link_data: { image_hash: await this.imageHash(input), link, message: input.primaryText, name: input.headline, description: input.description, call_to_action: cta } };
+    }
+
     const creative = await graph<{ id: string }>(`${this.account.id}/adcreatives`, {
       method: "POST",
       params: {
         name: `OCP – ${input.name}`,
         object_story_spec: {
           page_id: page.id,
-          link_data: {
-            image_hash,
-            link: input.linkUrl ?? "https://fb.me/",
-            message: input.primaryText,
-            name: input.headline,
-            call_to_action: callToAction,
-          },
+          // run on Instagram with the company's own profile, not just the Page name
+          ...(company?.instagramUserId ? { instagram_user_id: company.instagramUserId } : {}),
+          ...spec,
         },
+        url_tags: input.urlTags,
+        degrees_of_freedom_spec: input.creativeFeatures
+          ? { creative_features_spec: Object.fromEntries(Object.entries(input.creativeFeatures).map(([k, v]) => [k, { enroll_status: v }])) }
+          : undefined,
       },
     });
     return graph<{ id: string }>(`${this.account.id}/ads`, {
       method: "POST",
-      params: {
-        name: input.name,
-        adset_id: input.adsetId,
-        creative: { creative_id: creative.id },
-        status: input.activate ? "ACTIVE" : "PAUSED",
-      },
+      params: { name: input.name, adset_id: input.adsetId, creative: { creative_id: creative.id }, status: input.activate ? "ACTIVE" : "PAUSED" },
     });
   }
 
@@ -460,17 +528,34 @@ export class MetaGraphProvider implements AdsProvider {
 
   async createLeadForm(input: LeadFormInput) {
     const page = await this.page();
-    const questions: Record<string, string>[] = input.questions.map((type) => ({ type }));
-    if (input.customQuestion) questions.push({ type: "CUSTOM", key: "note", label: input.customQuestion });
+    const questions = input.questions.map((q, i) =>
+      typeof q === "string"
+        ? { type: q }
+        : {
+            type: "CUSTOM",
+            key: `q${i + 1}`,
+            label: q.label,
+            ...(q.options?.length ? { options: q.options.map((value, j) => ({ value, key: `q${i + 1}_${j + 1}` })) } : {}),
+          },
+    );
+    const btn = input.thankYouButton;
     return graph<{ id: string }>(`${page.id}/leadgen_forms`, {
       method: "POST",
       token: page.token,
       params: {
         name: input.name,
+        locale: input.locale ?? "HU_HU",
         questions,
-        privacy_policy: { url: input.privacyUrl },
-        context_card: { title: input.name, style: "PARAGRAPH_STYLE", content: [input.intro] },
-        thank_you_page: { title: "Köszönjük!", body: input.thankYou },
+        is_optimized_for_quality: input.higherIntent ? "true" : "false",
+        privacy_policy: { url: input.privacyUrl, link_text: "Adatvédelmi tájékoztató" },
+        context_card: { title: input.introTitle ?? input.name, style: input.introStyle ?? (input.intro.length > 1 ? "LIST_STYLE" : "PARAGRAPH_STYLE"), content: input.intro },
+        thank_you_page: {
+          title: input.thankYouTitle ?? "Köszönjük!",
+          body: input.thankYou,
+          ...(btn
+            ? { button_type: btn.type, button_text: btn.text, ...(btn.type === "VIEW_WEBSITE" ? { website_url: btn.url } : { business_phone_number: btn.phone }) }
+            : {}),
+        },
       },
     });
   }

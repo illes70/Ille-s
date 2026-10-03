@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { completeLogin } from "@/lib/meta/oauth";
 import { logActivity, updateStore } from "@/lib/store";
 import { adsCache } from "@/lib/live-bus";
+import { invalidateAccounts } from "@/lib/meta/provider";
 import { startFullSync } from "@/lib/live";
 
 export async function GET(req: Request) {
@@ -26,6 +27,7 @@ export async function GET(req: Request) {
       ["accounts", "ads", "leads", "health", "company", "overview"],
     );
     adsCache.clear();
+    invalidateAccounts();
     const subscribed = auth.pages.filter((p) => p.leadgenSubscribed).length;
     await logActivity(
       "system",

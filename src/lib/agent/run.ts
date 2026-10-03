@@ -100,7 +100,7 @@ export async function runAgentTurn(userText: string, images: string[], emit: (e:
         const label = toolLabel(t.name, t.input);
         emit({ type: "tool_start", tool: t.name, label });
         const r = await runTool(t.name, t.input);
-        emit({ type: "tool_end", tool: t.name, label, ok: r.ok });
+        emit({ type: "tool_end", tool: t.name, label, ok: r.ok, flag: r.flag });
         return {
           type: "tool_result" as const,
           tool_use_id: t.id,

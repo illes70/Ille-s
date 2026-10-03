@@ -10,11 +10,19 @@ import { LiveNumber } from "@/components/live/LiveNumber";
 import { FacebookIcon } from "@/components/FacebookIcon";
 import { refreshAll, usePoll, usePollWithRefresh } from "@/components/usePoll";
 
+interface Pending {
+  id: string;
+  name: string;
+  businessId: string;
+  businessName: string;
+}
+
 interface OverviewResponse {
   mode: "demo" | "meta";
   rows: { account: AdAccount; summary: AccountSummary }[];
   fetchedAt: string;
   sync: SyncState;
+  pending?: Pending[];
   error?: string;
 }
 
@@ -148,6 +156,8 @@ export default function OverviewPage() {
         <Kpi label="CPL 7 nap" value={wLeads ? wSpend / wLeads : null} format={money} />
       </section>
 
+      {!!data?.pending?.length && <PendingAccounts items={data.pending} onDone={reload} />}
+
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold tracking-tight">Fiókok</h2>
         {(data?.rows.length ?? 0) > 6 && (
@@ -221,5 +231,66 @@ function Cell({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="text-[11px] text-muted">{label}</dt>
       <dd className="truncate font-semibold">{value}</dd>
     </div>
+  );
+}
+
+/** Client accounts that sit in a Business Manager but aren't assigned to the user yet. */
+function PendingAccounts({ items, onDone }: { items: Pending[]; onDone: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, { error: string; link?: string }>>({});
+
+  async function claim(p: Pending) {
+    setBusy(p.id);
+    const res = await fetch("/api/accounts/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
+    if (!res.ok) {
+      const body = (await res.json()) as { error: string; link?: string };
+      setErrors((e) => ({ ...e, [p.id]: body }));
+    }
+    setBusy(null);
+    onDone();
+  }
+
+  async function recheck() {
+    setBusy("all");
+    await fetch("/api/accounts/claim", { method: "PUT" });
+    setBusy(null);
+    onDone();
+  }
+
+  return (
+    <section className="card fade-in mb-8 border-warn/40 p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-semibold">Hozzáférés kell ({items.length})</h2>
+          <p className="text-[13px] text-muted">Ezeket a fiókokat a Business Managereden keresztül látod, de még nem vagy hozzájuk rendelve.</p>
+        </div>
+        <button onClick={recheck} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-muted hover:text-fg disabled:opacity-60">
+          <RefreshCw size={13} className={busy === "all" ? "animate-spin" : ""} /> Frissítés
+        </button>
+      </div>
+      <ul className="divide-y divide-line">
+        {items.map((p) => (
+          <li key={p.id} className="flex flex-wrap items-center gap-3 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{p.name}</p>
+              <p className="text-xs text-muted">{p.businessName}</p>
+              {errors[p.id] && (
+                <p className="mt-1 text-xs text-warn">
+                  {errors[p.id].error.split("\n")[0]}{" "}
+                  {errors[p.id].link && (
+                    <a href={errors[p.id].link} target="_blank" rel="noreferrer" className="font-medium underline">
+                      Megnyitás a Business Managerben
+                    </a>
+                  )}
+                </p>
+              )}
+            </div>
+            <button onClick={() => claim(p)} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-fg px-3 py-1.5 text-xs font-semibold text-bg disabled:opacity-60">
+              {busy === p.id && <Loader2 size={12} className="animate-spin" />} Hozzáférés beállítása
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

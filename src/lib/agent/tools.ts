@@ -7,45 +7,12 @@ import { runScan } from "../engine/monitor";
 import { getCompany, saveCompany, searchKnowledge } from "../company";
 import { composeAdImage } from "../creative/render";
 import { generatePhoto } from "../creative/generate";
-import { claudeImageBlock } from "../creative/claude-files";
 import type { KnowledgeEntry, Proposal, Recipe } from "../types";
+import { CTA, Rich, confirmedFlag, tool, withImage, type Tool, type ToolDef, type ToolResultContent } from "./tool-kit";
+import { metaTools } from "./tools-meta";
+import { assessBudgetChange, assessLearningEdit, assessPause, checkSpecialCategory, gate, lintAdCopy, merge, type SpecialCategory } from "../meta/advisor";
 
-type Tool = Anthropic.Beta.Messages.BetaTool;
-type ToolResultContent = Exclude<Anthropic.Beta.Messages.BetaToolResultBlockParam["content"], string | undefined>;
-
-/** A tool result that carries images (e.g. a composed ad) so the assistant can look at it. */
-class Rich {
-  constructor(readonly blocks: ToolResultContent) {}
-}
-
-async function withImage(text: unknown, url: string) {
-  return new Rich([{ type: "text", text: JSON.stringify(text) }, await claudeImageBlock(url)] as ToolResultContent);
-}
-
-interface ToolDef<S extends z.ZodType> {
-  schema: S;
-  definition: Tool;
-  /** short Hungarian label shown in the chat while the tool runs */
-  label: (input: z.infer<S>) => string;
-  run: (input: z.infer<S>) => Promise<unknown>;
-}
-
-function tool<S extends z.ZodType>(name: string, description: string, schema: S, label: ToolDef<S>["label"], run: ToolDef<S>["run"]): ToolDef<S> {
-  const input_schema = z.toJSONSchema(schema) as Tool["input_schema"];
-  delete (input_schema as Record<string, unknown>)["$schema"];
-  return {
-    schema,
-    label,
-    run,
-    definition: { name, description, input_schema, eager_input_streaming: true },
-  };
-}
-
-const CTA = z
-  .enum(["LEARN_MORE", "SIGN_UP", "GET_QUOTE", "CONTACT_US", "APPLY_NOW", "BOOK_NOW", "CALL_NOW", "SUBSCRIBE"])
-  .describe("Meta call-to-action típus");
-
-const tools = [
+const coreTools: ToolDef[] = [
   tool(
     "get_account_overview",
     "Összesítő a hirdetési fiókról az elmúlt 7 napra: költés, leadek, CPL, aktív hirdetések, nyitott javaslatok és a beállított célok.",
@@ -93,81 +60,175 @@ const tools = [
     },
   ),
   tool(
-    "set_ad_status",
-    "Hirdetés leállítása (PAUSED) vagy indítása (ACTIVE). Csak akkor hívd, ha a felhasználó kérte, vagy egyértelműen jóváhagyta.",
-    z.object({ ad_id: z.string(), status: z.enum(["ACTIVE", "PAUSED"]), reason: z.string() }),
-    (i) => (i.status === "PAUSED" ? "Hirdetés leállítása" : "Hirdetés indítása"),
-    async ({ ad_id, status, reason }) => {
-      await (await getProvider()).setAdStatus(ad_id, status);
-      await logActivity("agent", "action", `${status === "PAUSED" ? "Leállítottam" : "Elindítottam"}: ${ad_id} – ${reason}`);
+    "set_status",
+    "Hirdetés, hirdetéscsoport vagy kampány indítása (ACTIVE) vagy leállítása (PAUSED). Csak ha a felhasználó kérte vagy jóváhagyta. Ha a leállítás kockázatos (egyetlen aktív / legjobb hirdetés), needs_confirmation választ kapsz.",
+    z.object({
+      level: z.enum(["ad", "adset", "campaign"]).default("ad"),
+      id: z.string(),
+      status: z.enum(["ACTIVE", "PAUSED"]),
+      reason: z.string(),
+      confirmed_after_warning: confirmedFlag,
+    }),
+    (i) => `${i.level === "ad" ? "Hirdetés" : i.level === "adset" ? "Hirdetéscsoport" : "Kampány"} ${i.status === "PAUSED" ? "leállítása" : "indítása"}`,
+    async ({ level, id, status, reason, confirmed_after_warning }) => {
+      const provider = await getProvider();
+      if (level === "ad") {
+        const ads = await provider.listAds();
+        const ad = ads.find((a) => a.id === id);
+        if (ad && status === "PAUSED") {
+          const stop = gate(assessPause(ad, ads.filter((a) => a.adsetId === ad.adsetId)), confirmed_after_warning);
+          if (stop) return stop;
+        }
+        if (ad && status === "ACTIVE") {
+          const stop = gate(lintAdCopy([ad.creative]), confirmed_after_warning);
+          if (stop) return stop;
+        }
+        await provider.setAdStatus(id, status);
+      } else {
+        if (provider.mode === "demo") {
+          await updateStore((d) => d.ads.filter((a) => (level === "adset" ? a.adsetId : a.campaignId) === id).forEach((a) => (a.status = status)), ["ads"]);
+        } else {
+          const { updateObject } = await import("../meta/manage");
+          await updateObject(id, { status });
+          const { adsChanged } = await import("../live-bus");
+          adsChanged(provider.account.id);
+        }
+      }
+      await logActivity("agent", "action", `${status === "PAUSED" ? "Leállítva" : "Elindítva"} (${level}): ${id} – ${reason}`);
       return { ok: true };
     },
   ),
   tool(
-    "set_adset_budget",
-    "Hirdetéscsoport napi büdzséjének módosítása (fiók pénznemében, egész szám). A robotpilóta maximum emelési korlátja érvényes, kivéve ha a felhasználó kifejezetten nagyobb emelést kért.",
+    "set_budget",
+    "Napi büdzsé módosítása egy hirdetéscsoporton (ABO) vagy kampányon (CBO), a fiók pénznemében, egész számmal. Védőkorlátok: a beállított max. emelés felett csak akkor, ha a felhasználó maga mondta az összeget; 30% feletti ugrás vagy tanulási fázis esetén needs_confirmation.",
     z.object({
-      adset_id: z.string(),
+      level: z.enum(["adset", "campaign"]).default("adset"),
+      id: z.string(),
       daily_budget: z.number().int().positive(),
       user_explicitly_requested: z.boolean().describe("true, ha a felhasználó maga mondta ezt az összeget"),
       reason: z.string(),
+      confirmed_after_warning: confirmedFlag,
     }),
     () => "Büdzsé módosítása",
-    async ({ adset_id, daily_budget, user_explicitly_requested, reason }) => {
+    async ({ level, id, daily_budget, user_explicitly_requested, reason, confirmed_after_warning }) => {
       const provider = await getProvider();
-      const [ads, store] = await Promise.all([provider.listAds(), readStore()]);
-      const current = ads.find((a) => a.adsetId === adset_id)?.adsetDailyBudget;
-      if (current === undefined) throw new Error(`Nincs ilyen hirdetéscsoport: ${adset_id}`);
-      const maxPct = store.settings.autopilot.maxBudgetIncreasePct;
-      if (!user_explicitly_requested && daily_budget > current * (1 + maxPct / 100)) {
-        throw new Error(
-          `Az emelés meghaladja a ${maxPct}%-os korlátot (${current} → ${daily_budget}). Kérdezd meg a felhasználót.`,
-        );
+      const [ads, store, company] = await Promise.all([provider.listAds(), readStore(), getCompany()]);
+      const sample = ads.find((a) => (level === "adset" ? a.adsetId : a.campaignId) === id);
+      let current = sample?.adsetDailyBudget;
+      if (provider.mode === "meta") {
+        const { graph } = await import("../meta/graph");
+        const o = await graph<{ daily_budget?: string; name: string }>(id, { params: { fields: "daily_budget,name" } });
+        if (!o.daily_budget) {
+          return { status: "refused", reasons: [level === "adset" ? "Ennek a hirdetéscsoportnak nincs saját napi büdzséje (a kampány osztja el – CBO). A kampány büdzséjét módosítsd." : "Ennek a kampánynak nincs kampányszintű napi büdzséje (ABO) – a hirdetéscsoportokét módosítsd."] };
+        }
+        current = Number(o.daily_budget) / Number(process.env.META_CURRENCY_OFFSET ?? 100);
       }
-      await provider.setAdsetBudget(adset_id, daily_budget);
-      await logActivity("agent", "action", `Büdzsé ${adset_id}: ${current} → ${daily_budget} (${reason})`);
+      if (current === undefined) throw new Error(`Nincs ilyen ${level === "adset" ? "hirdetéscsoport" : "kampány"}: ${id}`);
+      const verdict = assessBudgetChange({
+        current,
+        next: daily_budget,
+        learning: level === "adset" ? sample?.adsetLearning : undefined,
+        maxIncreasePct: store.settings.autopilot.maxBudgetIncreasePct,
+        userSaidAmount: user_explicitly_requested,
+        targetCpl: company.targetCpl ?? store.settings.targetCpl,
+        name: sample?.[level === "adset" ? "adsetName" : "campaignName"] ?? id,
+      });
+      const stop = gate(verdict, confirmed_after_warning);
+      if (stop) return stop;
+      if (level === "adset") await provider.setAdsetBudget(id, daily_budget);
+      else if (provider.mode === "demo") await provider.setAdsetBudget(sample!.adsetId, daily_budget);
+      else {
+        const { updateObject, toMinor } = await import("../meta/manage");
+        await updateObject(id, { daily_budget: toMinor(daily_budget) });
+        const { adsChanged } = await import("../live-bus");
+        adsChanged(provider.account.id);
+      }
+      await logActivity("agent", "action", `Büdzsé (${level}) ${id}: ${current} → ${daily_budget} (${reason})`);
       return { ok: true, previous: current, now: daily_budget };
     },
   ),
   tool(
     "create_ads",
-    "Új hirdetések feltöltése egy meglévő hirdetéscsoportba. Minden variánshoz kell kép: image_url (OCP kép: /api/media/…, vagy nyilvános URL – pl. a compose_ad_image eredménye) vagy reuse_image_from_ad_id (egy meglévő hirdetés képe). Alapból PAUSED állapotban jönnek létre; activate=true csak ha a felhasználó kifejezetten kérte az élesítést.",
+    "Új hirdetések feltöltése egy meglévő hirdetéscsoportba. Formátum: image (alap), carousel (2–10 kártya), video (előbb upload_video). Kép: image_url (OCP kép /api/media/… vagy /api/creative/…, vagy nyilvános URL) vagy reuse_image_from_ad_id. Leadhez lead_form_id, weboldalhoz link_url + url_tags (UTM). Advantage+ kreatív fejlesztések: creative_features (pl. {\"text_optimizations\":\"OPT_OUT\"}) – áras/pontos szövegű képnél kapcsold ki a szöveg- és képmódosítást. A szövegeket a Meta irányelvei szerint ellenőrzöm (refused / needs_confirmation). Alapból PAUSED; activate=true csak ha a felhasználó kérte.",
     z.object({
       adset_id: z.string(),
       activate: z.boolean().default(false),
       lead_form_id: z.string().optional(),
       link_url: z.string().optional(),
+      url_tags: z.string().optional(),
       recipe_id: z.string().optional().describe("ha egy recept alapján készül, annak az azonosítója"),
+      creative_features: z.record(z.string(), z.enum(["OPT_IN", "OPT_OUT"])).optional(),
+      confirmed_after_warning: confirmedFlag,
       ads: z
         .array(
           z.object({
             name: z.string(),
-            headline: z.string().max(60),
-            primary_text: z.string().max(600),
+            format: z.enum(["image", "carousel", "video"]).default("image"),
+            headline: z.string().max(80),
+            primary_text: z.string().max(2000),
+            description: z.string().max(120).optional(),
             cta: CTA,
             image_url: z.string().optional(),
             reuse_image_from_ad_id: z.string().optional(),
+            video_id: z.string().optional(),
+            cards: z
+              .array(
+                z.object({
+                  headline: z.string().max(60),
+                  description: z.string().max(60).optional(),
+                  image_url: z.string().optional(),
+                  reuse_image_from_ad_id: z.string().optional(),
+                  link: z.string().optional(),
+                }),
+              )
+              .max(10)
+              .optional(),
           }),
         )
         .min(1)
         .max(20),
     }),
     (i) => `${i.ads.length} hirdetés feltöltése`,
-    async ({ adset_id, activate, lead_form_id, link_url, recipe_id, ads }) => {
+    async ({ adset_id, activate, lead_form_id, link_url, url_tags, recipe_id, creative_features, confirmed_after_warning, ads }) => {
       const provider = await getProvider();
+      const company = await getCompany();
+      // what the Meta reviewers will read: every headline, text and card
+      const copy = ads.flatMap((a) => [
+        { headline: a.headline, primaryText: a.primary_text, description: a.description },
+        ...(a.cards ?? []).map((c) => ({ headline: c.headline, primaryText: undefined as string | undefined, description: c.description })),
+      ]);
+      let declared: SpecialCategory[] = [];
+      if (provider.mode === "meta") {
+        const { graph } = await import("../meta/graph");
+        const o = await graph<{ campaign?: { special_ad_categories?: string[] } }>(adset_id, { params: { fields: "campaign{special_ad_categories}" } }).catch(() => null);
+        declared = (o?.campaign?.special_ad_categories ?? []) as SpecialCategory[];
+      }
+      const verdict = merge(
+        lintAdCopy(copy),
+        checkSpecialCategory(`${company.industry}\n${copy.map((c) => `${c.headline ?? ""} ${c.primaryText ?? ""}`).join("\n")}`, declared),
+        activate ? assessLearningEdit((await provider.listAds()).find((a) => a.adsetId === adset_id)?.adsetLearning, "új aktív hirdetés hozzáadása") : { refuse: [], warn: [], alternatives: [] },
+      );
+      const stop = gate(verdict, confirmed_after_warning);
+      if (stop) return stop;
       const results = [];
       for (const ad of ads) {
         try {
           const { id } = await provider.createAd({
             adsetId: adset_id,
             name: ad.name,
+            format: ad.format,
             headline: ad.headline,
             primaryText: ad.primary_text,
+            description: ad.description,
             cta: ad.cta,
             imageUrl: ad.image_url,
             reuseImageFromAdId: ad.reuse_image_from_ad_id,
+            videoId: ad.video_id,
+            cards: ad.cards?.map((c) => ({ headline: c.headline, description: c.description, imageUrl: c.image_url, reuseImageFromAdId: c.reuse_image_from_ad_id, link: c.link })),
             leadFormId: lead_form_id,
             linkUrl: link_url,
+            urlTags: url_tags,
+            creativeFeatures: creative_features,
             recipeId: recipe_id,
             activate,
           });
@@ -178,31 +239,47 @@ const tools = [
       }
       const ok = results.filter((r) => r.ok).length;
       await logActivity("agent", "create", `${ok}/${ads.length} új hirdetés feltöltve (${activate ? "élesítve" : "szüneteltetve"}) – ${adset_id}`);
-      return results;
+      return { results, warningsAccepted: verdict.warn };
     },
   ),
   tool(
     "create_lead_form",
-    "Meta Instant Form (lead űrlap) létrehozása a Facebook oldalon. Rövid, kevés mezős űrlapot javasolj (név + telefon + 1 kérdés).",
+    "Meta Instant Form (lead űrlap) létrehozása a cég Facebook-oldalán. Javasolt: név + telefon + 1 feleletválasztós minősítő kérdés; „magasabb szándék” (higher_intent), ha sok a gyenge lead; köszönőoldalon hívás- vagy weboldal-gomb. Adatvédelmi URL kötelező (a cégprofil weboldaláról is jöhet). Közzététel után nem szerkeszthető – módosításhoz új űrlap kell.",
     z.object({
       name: z.string(),
-      intro: z.string(),
-      questions: z.array(z.enum(["FULL_NAME", "PHONE", "EMAIL", "CITY"])).min(1),
-      custom_question: z.string().optional(),
+      intro: z.array(z.string()).min(1).max(5).describe("bevezető: 1 bekezdés vagy 2–5 felsoroláspont"),
+      intro_title: z.string().optional(),
+      questions: z
+        .array(
+          z.union([
+            z.enum(["FULL_NAME", "FIRST_NAME", "LAST_NAME", "EMAIL", "PHONE", "CITY", "ZIP", "STREET_ADDRESS", "COMPANY_NAME", "JOB_TITLE"]),
+            z.object({ label: z.string(), options: z.array(z.string()).max(10).optional().describe("feleletválasztós opciók; üresen = rövid szöveges válasz") }),
+          ]),
+        )
+        .min(1)
+        .max(15),
+      higher_intent: z.boolean().default(false),
       privacy_url: z.string(),
+      thank_you_title: z.string().optional(),
       thank_you: z.string(),
+      thank_you_button: z
+        .object({ type: z.enum(["VIEW_WEBSITE", "CALL_BUSINESS"]), text: z.string(), url: z.string().optional(), phone: z.string().optional() })
+        .optional(),
     }),
-    () => "Instant form létrehozása",
+    () => "Instant űrlap létrehozása",
     async (i) => {
       const res = await (await getProvider()).createLeadForm({
         name: i.name,
         intro: i.intro,
+        introTitle: i.intro_title,
         questions: i.questions,
-        customQuestion: i.custom_question,
+        higherIntent: i.higher_intent,
         privacyUrl: i.privacy_url,
+        thankYouTitle: i.thank_you_title,
         thankYou: i.thank_you,
+        thankYouButton: i.thank_you_button,
       });
-      await logActivity("agent", "create", `Instant form létrehozva: ${i.name}`);
+      await logActivity("agent", "create", `Instant űrlap létrehozva: ${i.name}${i.higher_intent ? " (magasabb szándék)" : ""}`);
       return res;
     },
   ),
@@ -397,11 +474,28 @@ const tools = [
   ),
   tool(
     "update_ad_creative",
-    "Futó hirdetés szövegének és/vagy képének cseréje. A Metán ez új kreatívot jelent: a hirdetés újra ellenőrzésre megy, és a tanulás részben újraindulhat – ezt mondd el a felhasználónak. Tesztelésnél inkább új hirdetést javasolj mellé (create_ads).",
-    z.object({ ad_id: z.string(), headline: z.string().max(60).optional(), primary_text: z.string().max(600).optional(), image_url: z.string().optional() }),
+    "Futó hirdetés szövegének és/vagy képének cseréje. A Metán ez új kreatívot jelent: a hirdetés újra ellenőrzésre megy, és a tanulás részben újraindulhat. Tanulási fázisban needs_confirmation-t kapsz; teszteléshez inkább új hirdetést javasolj mellé (create_ads).",
+    z.object({
+      ad_id: z.string(),
+      headline: z.string().max(80).optional(),
+      primary_text: z.string().max(2000).optional(),
+      image_url: z.string().optional(),
+      confirmed_after_warning: confirmedFlag,
+    }),
     () => "Kreatív cseréje",
-    async ({ ad_id, headline, primary_text, image_url }) => {
-      await (await getProvider()).updateAdCreative(ad_id, { headline, primaryText: primary_text, imageUrl: image_url });
+    async ({ ad_id, headline, primary_text, image_url, confirmed_after_warning }) => {
+      const provider = await getProvider();
+      const ad = (await provider.listAds()).find((a) => a.id === ad_id);
+      const verdict = merge(
+        lintAdCopy([{ headline, primaryText: primary_text }]),
+        assessLearningEdit(ad?.adsetLearning, "a kreatív cseréje"),
+        ad && ad.metrics.cpl !== null && ad.metrics.leads >= 5
+          ? { refuse: [], warn: [`„${ad.name}” most is hoz leadet (${ad.metrics.leads} db, CPL ${ad.metrics.cpl}) – a csere után a teljesítménye újra bizonytalan.`], alternatives: ["Új variánst tegyél mellé, és hagyd, hogy a Meta eldöntse, melyik jobb."] }
+          : { refuse: [], warn: [], alternatives: [] },
+      );
+      const stop = gate(verdict, confirmed_after_warning);
+      if (stop) return stop;
+      await provider.updateAdCreative(ad_id, { headline, primaryText: primary_text, imageUrl: image_url });
       await logActivity("agent", "action", `Kreatív frissítve: ${ad_id}${image_url ? " (új kép)" : ""}${headline || primary_text ? " (új szöveg)" : ""}`);
       return { ok: true };
     },
@@ -480,6 +574,8 @@ const tools = [
   ),
 ];
 
+const tools: ToolDef[] = [...coreTools, ...metaTools];
+
 export const clientTools: Tool[] = tools.map((t) => t.definition);
 
 export const serverTools: Anthropic.Beta.Messages.BetaToolUnion[] = [
@@ -494,7 +590,7 @@ export function toolLabel(name: string, input: unknown): string {
   return parsed.success ? t.label(parsed.data as never) : name;
 }
 
-export async function runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string | ToolResultContent }> {
+export async function runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string | ToolResultContent; flag?: "confirm" | "refused" }> {
   const t = tools.find((x) => x.definition.name === name);
   if (!t) return { ok: false, content: `Ismeretlen eszköz: ${name}` };
   const parsed = t.schema.safeParse(input);
@@ -504,7 +600,9 @@ export async function runTool(name: string, input: unknown): Promise<{ ok: boole
   try {
     const result = await t.run(parsed.data as never);
     if (result instanceof Rich) return { ok: true, content: result.blocks };
-    return { ok: true, content: JSON.stringify(result ?? { ok: true }) };
+    const status = (result as { status?: string } | null)?.status;
+    const flag = status === "needs_confirmation" ? "confirm" : status === "refused" ? "refused" : undefined;
+    return { ok: true, content: JSON.stringify(result ?? { ok: true }), flag };
   } catch (e) {
     return { ok: false, content: e instanceof Error ? e.message : String(e) };
   }

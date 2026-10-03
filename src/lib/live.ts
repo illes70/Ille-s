@@ -1,6 +1,7 @@
 import "server-only";
 import type { AccountSummary, Ad, AdAccount, DailyPoint, Lead, SyncState } from "./types";
-import { getLeads, getProvider, listAccounts } from "./meta/provider";
+import { getLeads, getProvider, invalidateAccounts, listAccounts } from "./meta/provider";
+import type { PendingAccount } from "./meta/graph";
 import { adsCache, listenerCount, publish } from "./live-bus";
 import { logActivity, newId, readStore, updateStore } from "./store";
 
@@ -34,9 +35,15 @@ interface LiveState {
   overview?: Overview;
   overviewJob?: Promise<Overview>;
   sync: SyncState;
+  /** accounts seen so far – a new one means a client just gave access */
+  knownAccounts?: Set<string>;
+  /** Business Manager accounts the user isn't assigned to yet */
+  pending: PendingAccount[];
+  lastDiscovery?: number;
 }
 const g = globalThis as unknown as { __ocpLive?: LiveState };
-const state: LiveState = (g.__ocpLive ??= { inflight: new Map(), sync: { running: false, done: 0, total: 0 } });
+const state: LiveState = (g.__ocpLive ??= { inflight: new Map(), sync: { running: false, done: 0, total: 0 }, pending: [] });
+state.pending ??= [];
 const cache = adsCache as Map<string, Snapshot>;
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -167,7 +174,44 @@ async function fetchOverview(): Promise<Overview> {
 /** Headline numbers of every ad account (one batched Meta call), from cache when fresh. */
 export async function getOverview(maxAgeMs = 30_000) {
   const ov = state.overview && Date.now() - new Date(state.overview.fetchedAt).getTime() < maxAgeMs ? state.overview : await fetchOverview();
-  return { ...ov, sync: state.sync };
+  return { ...ov, sync: state.sync, pending: state.pending };
+}
+
+/** Load one account completely: profile, ads, creative images. */
+async function loadAccount(acc: AdAccount) {
+  const [{ autoProfile }, { warmCreativeImages }] = await Promise.all([import("./company"), import("./creative/creative-images")]);
+  await autoProfile(acc.id);
+  const snap = await fetchSnapshot(acc.id);
+  publish({ type: "invalidate", keys: ["ads", "company"] });
+  await warmCreativeImages(snap.ads.flatMap((a) => (a.creative.creativeId ? [a.creative.creativeId] : [])));
+}
+
+/**
+ * New client accounts appear by themselves: when a client gives the user access, the
+ * account shows up in /me/adaccounts and is loaded here – no reconnecting. Accounts
+ * that sit in a Business Manager without the user assigned are listed as "pending".
+ */
+export async function discoverAccounts(announce = true) {
+  if ((await getProvider()).mode !== "meta") return;
+  state.lastDiscovery = Date.now();
+  invalidateAccounts();
+  const accounts = await listAccounts();
+  const ids = new Set(accounts.map((a) => a.id));
+  const fresh = state.knownAccounts ? accounts.filter((a) => !state.knownAccounts!.has(a.id)) : [];
+  state.knownAccounts = ids;
+  for (const acc of fresh) {
+    if (!announce) break;
+    publish({ type: "account", account: acc });
+    await logActivity("system", "action", `Új ügyfélfiók csatlakoztatva: ${acc.name} – a profil, a hirdetések és a képek betöltve.`);
+    await loadAccount(acc).catch((err) => console.error("[ocp discover]", acc.id, err));
+  }
+  const { discoverBusinessAccounts } = await import("./meta/graph");
+  const before = JSON.stringify(state.pending);
+  state.pending = await discoverBusinessAccounts(ids).catch(() => state.pending);
+  if (fresh.length || JSON.stringify(state.pending) !== before) {
+    await fetchOverview().catch(() => undefined);
+    publish({ type: "invalidate", keys: ["overview", "accounts"] });
+  }
 }
 
 function setSync(sync: SyncState) {
@@ -183,12 +227,13 @@ export function startFullSync() {
   if (state.sync.running) return;
   void (async () => {
     try {
+      invalidateAccounts();
       const accounts = await listAccounts();
+      state.knownAccounts = new Set(accounts.map((a) => a.id));
       setSync({ running: true, done: 0, total: accounts.length });
       await fetchOverview();
       publish({ type: "invalidate", keys: ["overview", "accounts"] });
 
-      const { warmCreativeImages } = await import("./creative/creative-images");
       const queue = [...accounts];
       let done = 0;
       await Promise.all(
@@ -196,9 +241,7 @@ export function startFullSync() {
           for (let acc = queue.shift(); acc; acc = queue.shift()) {
             setSync({ running: true, done, total: accounts.length, current: acc.name });
             try {
-              const snap = await fetchSnapshot(acc.id);
-              publish({ type: "invalidate", keys: ["ads"] });
-              await warmCreativeImages(snap.ads.flatMap((a) => (a.creative.creativeId ? [a.creative.creativeId] : [])));
+              await loadAccount(acc);
             } catch (err) {
               console.error("[ocp sync]", acc.id, err);
             }
@@ -207,6 +250,7 @@ export function startFullSync() {
           }
         }),
       );
+      await discoverAccounts(false).catch(() => undefined);
       await logActivity("system", "action", `Szinkron kész: ${accounts.length} hirdetési fiók, minden hirdetés és kép betöltve.`);
     } catch (err) {
       await logActivity("system", "error", `Szinkron hiba: ${err instanceof Error ? err.message : String(err)}`);
@@ -243,6 +287,9 @@ async function tick() {
     const before = cache.get(id)?.signature;
     const snap = await fetchSnapshot(id);
     if (snap.signature !== before) publish({ type: "invalidate", keys: ["ads"] });
+
+    // new client accounts (access granted after connecting) – every 5 minutes
+    if (provider.mode === "meta" && Date.now() - (state.lastDiscovery ?? 0) > 5 * 60_000) await discoverAccounts();
 
     // every account's headline numbers: one batched call
     const prev = state.overview?.signature;

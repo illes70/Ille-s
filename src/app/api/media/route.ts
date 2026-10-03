@@ -4,7 +4,8 @@ import { readStore } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-const MAX = 8 * 1024 * 1024;
+const MAX_IMAGE = 8 * 1024 * 1024;
+const MAX_VIDEO = 200 * 1024 * 1024;
 
 export async function GET() {
   const account = (await getProvider()).account.id;
@@ -16,7 +17,10 @@ export async function POST(req: Request) {
   const form = await req.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return Response.json({ error: "Nincs fájl" }, { status: 400 });
-  if (file.size > MAX) return Response.json({ error: "A kép legfeljebb 8 MB lehet" }, { status: 413 });
+  const video = file.type.startsWith("video/");
+  if (file.size > (video ? MAX_VIDEO : MAX_IMAGE)) {
+    return Response.json({ error: video ? "A videó legfeljebb 200 MB lehet" : "A kép legfeljebb 8 MB lehet" }, { status: 413 });
+  }
   try {
     const account = (await getProvider()).account.id;
     const item = await saveMedia(Buffer.from(await file.arrayBuffer()), file.type, { kind: "upload", accountId: account });

@@ -188,7 +188,7 @@ function MediaLibrary() {
 
   async function upload(files: FileList) {
     setBusy(true);
-    for (const f of [...files].filter((x) => x.type.startsWith("image/"))) {
+    for (const f of [...files].filter((x) => x.type.startsWith("image/") || x.type.startsWith("video/"))) {
       const body = new FormData();
       body.append("file", f);
       await fetch("/api/media", { method: "POST", body });
@@ -203,13 +203,13 @@ function MediaLibrary() {
     <section className="card p-5 lg:sticky lg:top-6">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-semibold">Képtár</h2>
-        <input ref={ref} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
+        <input ref={ref} type="file" accept="image/*,video/mp4,video/quicktime" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
         <button onClick={() => ref.current?.click()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-fg px-3 py-1.5 text-xs font-semibold text-bg disabled:opacity-60">
           {busy ? <Loader2 size={13} className="animate-spin" /> : <ImagePlus size={13} />} Feltöltés
         </button>
       </div>
       <p className="mb-4 text-[13px] text-muted">
-        Munkafotók, logó, előtte/utána képek. Az asszisztens ezekből készít hirdetésképet – a chatben hivatkozhatsz rájuk.
+        Munkafotók, videók, logó, előtte/utána képek. Az asszisztens ezekből készít hirdetést – a chatben hivatkozhatsz rájuk.
       </p>
       {!media ? (
         <p className="text-sm text-muted">Betöltés…</p>
@@ -219,8 +219,12 @@ function MediaLibrary() {
         <div className="grid grid-cols-3 gap-2">
           {media.slice(0, 30).map((m) => (
             <a key={m.id} href={m.url} target="_blank" rel="noreferrer" className="group relative block overflow-hidden rounded-lg border border-line" title={`${KIND[m.kind]} · ${timeAgo(m.createdAt)}`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={m.url} alt="" className="aspect-square w-full object-cover transition-transform group-hover:scale-105" loading="lazy" />
+              {/\.(mp4|mov)$/.test(m.file) ? (
+                <video src={m.url} muted playsInline className="aspect-square w-full object-cover" />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.url} alt="" className="aspect-square w-full object-cover transition-transform group-hover:scale-105" loading="lazy" />
+              )}
               <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[10px] text-white">{KIND[m.kind]}</span>
             </a>
           ))}

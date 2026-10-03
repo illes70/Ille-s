@@ -160,6 +160,9 @@ export interface Company {
   targetCpl?: number;
   /** Facebook Page that runs the ads and owns the lead forms */
   pageId?: string;
+  /** Instagram business account the ads run with */
+  instagramUserId?: string;
+  instagramUsername?: string;
   logoUrl?: string;
   colors: [string, string];
   notes: string;
@@ -266,6 +269,7 @@ export type LiveEvent =
   | { type: "invalidate"; keys: LiveKey[] }
   | { type: "lead"; lead: Lead; accountName?: string }
   | { type: "sync"; sync: SyncState }
+  | { type: "account"; account: AdAccount }
   | { type: "hello"; at: string };
 
 export type LiveKey = "ads" | "leads" | "activity" | "proposals" | "accounts" | "company" | "knowledge" | "recipes" | "health" | "overview";
@@ -276,4 +280,6 @@ export interface ChatTurnEvent {
   tool?: string;
   label?: string;
   ok?: boolean;
+  /** the advisor stopped the action: waiting for the user / not allowed */
+  flag?: "confirm" | "refused";
 }

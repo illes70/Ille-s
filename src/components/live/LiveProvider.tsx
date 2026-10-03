@@ -29,6 +29,10 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         const e = JSON.parse(msg.data) as LiveEvent;
         if (e.type === "invalidate") invalidate(e.keys);
         if (e.type === "sync") window.dispatchEvent(new CustomEvent("ocp:sync", { detail: e.sync }));
+        if (e.type === "account") {
+          window.dispatchEvent(new CustomEvent("ocp:account", { detail: e.account }));
+          invalidate(["accounts", "overview"]);
+        }
         if (e.type === "lead") {
           window.dispatchEvent(new CustomEvent<{ lead: Lead; accountName?: string }>("ocp:lead", { detail: e }));
           invalidate(["leads", "ads", "activity"]);

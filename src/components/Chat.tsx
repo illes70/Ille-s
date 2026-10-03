@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUp, Check, ImagePlus, Loader2, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowUp, Check, ImagePlus, Loader2, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import type { ChatTurnEvent, LiveKey, MediaItem } from "@/lib/types";
 import { refreshAll, usePoll } from "./usePoll";
 
 interface Step {
   label: string;
-  state: "run" | "ok" | "err" | "note";
+  state: "run" | "ok" | "err" | "note" | "warn";
+  note?: string;
 }
 interface Msg {
   role: "user" | "assistant";
@@ -140,7 +141,12 @@ export function Chat() {
       patchLast((m) => {
         const steps = [...(m.steps ?? [])];
         const i = steps.findIndex((s) => s.state === "run" && s.label === e.label);
-        if (i >= 0) steps[i] = { ...steps[i], state: e.ok ? "ok" : "err" };
+        if (i >= 0)
+          steps[i] = {
+            ...steps[i],
+            state: !e.ok ? "err" : e.flag ? "warn" : "ok",
+            note: e.flag === "confirm" ? "megerősítésre vár" : e.flag === "refused" ? "nem engedélyezett" : undefined,
+          };
         return { ...m, steps };
       });
       refreshAll();
@@ -326,8 +332,10 @@ function Bubble({ m, streaming }: { m: Msg; streaming: boolean }) {
                 {s.state === "run" && <Loader2 size={13} className="animate-spin text-accent" />}
                 {s.state === "ok" && <Check size={13} className="text-good" />}
                 {s.state === "err" && <X size={13} className="text-bad" />}
+                {s.state === "warn" && <TriangleAlert size={13} className="text-warn" />}
                 {s.state === "note" && <span className="mx-[3px] size-1.5 rounded-full bg-muted/60" />}
                 <span className={s.state === "note" ? "italic" : ""}>{s.label}</span>
+                {s.note && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn">{s.note}</span>}
               </li>
             ))}
           </ul>

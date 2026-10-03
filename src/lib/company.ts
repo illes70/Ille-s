@@ -74,3 +74,23 @@ export async function searchKnowledge(query: string, limit = 6): Promise<Knowled
   const hits = scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score);
   return (hits.length ? hits : scored.filter((x) => x.e.kind === "own")).slice(0, limit).map((x) => x.e);
 }
+
+/**
+ * New ad account → company profile without any typing: name, phone, website, address,
+ * logo and Instagram from the Facebook Page the account advertises with. Best effort.
+ */
+export async function autoProfile(accountId: string) {
+  if ((await readStore()).companies[accountId]) return;
+  try {
+    const { graph } = await import("./meta/graph");
+    const promote = await graph<{ data: { id: string }[] }>(`${accountId}/promote_pages`, { params: { fields: "id", limit: "1" } }).catch(() => null);
+    const pageId = promote?.data[0]?.id;
+    if (!pageId) return;
+    await prefillFromPage(accountId, pageId);
+    const { instagramForPage } = await import("./meta/manage");
+    const ig = await instagramForPage(pageId).catch(() => null);
+    if (ig) await saveCompany({ accountId, instagramUserId: ig.id, instagramUsername: ig.username });
+  } catch (err) {
+    console.error("[ocp autoProfile]", accountId, err);
+  }
+}

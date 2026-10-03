@@ -19,6 +19,9 @@ import type {
 } from "./types";
 import { demoAds, demoCompanies, demoLeads, demoRecipes, demoSettings } from "./demo-data";
 import { knowledgeSeed } from "./knowledge-seed";
+import { metaGuide } from "./knowledge-meta";
+
+const playbook = () => structuredClone([...knowledgeSeed, ...metaGuide]);
 import { publish } from "./live-bus";
 
 // Single-tenant JSON store for the MVP. Swap for Postgres when OCP goes multi-tenant.
@@ -41,6 +44,12 @@ export interface StoreData {
   media: MediaItem[];
   /** demo-mode ads (in Meta mode ads are always read live) */
   ads: Ad[];
+  /** demo-mode campaigns / ad sets created through the assistant (no ads yet) */
+  demoCreated?: {
+    campaigns: { id: string; name: string; objective: string; specialAdCategories: string[]; dailyBudget?: number }[];
+    adsets: { id: string; campaignId: string; name: string; dailyBudget?: number; optimizationGoal: string; targeting: unknown }[];
+    audiences: { id: string; name: string; type: string; size: string }[];
+  };
   /** demo leads + leads pushed by the Meta webhook */
   leads: Lead[];
   /** status OCP tracks per lead id (Meta has no lead pipeline) */
@@ -67,7 +76,7 @@ function seed(previous?: Partial<StoreData>): StoreData {
     settings: structuredClone(demoSettings),
     metaAuth: previous?.metaAuth,
     companies: structuredClone(demoCompanies),
-    knowledge: structuredClone(knowledgeSeed),
+    knowledge: playbook(),
     recipes: structuredClone(demoRecipes),
     media: [],
     ads: structuredClone(demoAds),
@@ -84,6 +93,8 @@ async function load(): Promise<StoreData> {
   try {
     const parsed = JSON.parse(await fs.readFile(FILE, "utf8")) as StoreData;
     state.cache = parsed.version === VERSION ? parsed : seed(parsed);
+    // the playbook ships with the code: refresh it, keep the user's own entries
+    state.cache.knowledge = [...state.cache.knowledge.filter((e) => e.kind === "own"), ...playbook()];
   } catch {
     state.cache = seed();
   }

@@ -44,7 +44,25 @@ export class DemoProvider implements AdsProvider {
 
   async createAd(input: NewAdInput) {
     return updateStore((d) => {
-      const sibling = d.ads.find((a) => a.adsetId === input.adsetId);
+      let sibling: Pick<Ad, "accountId" | "campaignId" | "campaignName" | "adsetId" | "adsetName" | "adsetDailyBudget" | "adsetLearning"> | undefined = d.ads.find(
+        (a) => a.adsetId === input.adsetId,
+      );
+      if (!sibling) {
+        // an ad set the assistant created in demo mode
+        const as = d.demoCreated?.adsets.find((x) => x.id === input.adsetId);
+        const cmp = as && d.demoCreated?.campaigns.find((c) => c.id === as.campaignId);
+        if (as && cmp) {
+          sibling = {
+            accountId: this.account.id,
+            campaignId: cmp.id,
+            campaignName: cmp.name,
+            adsetId: as.id,
+            adsetName: as.name,
+            adsetDailyBudget: as.dailyBudget ?? cmp.dailyBudget ?? 0,
+            adsetLearning: "LEARNING",
+          };
+        }
+      }
       if (!sibling) throw new Error(`Nincs ilyen hirdetéscsoport: ${input.adsetId}`);
       const source = input.reuseImageFromAdId
         ? d.ads.find((a) => a.id === input.reuseImageFromAdId)

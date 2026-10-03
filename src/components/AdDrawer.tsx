@@ -7,7 +7,8 @@ import { adsManagerUrl } from "@/lib/links";
 import type { Ad } from "@/lib/types";
 import { adTotals, series, type SeriesMetric } from "@/lib/analytics";
 import { fmtMoney, fmtNum } from "@/lib/format";
-import { Badge, CreativePreview, LEARNING, adHealth } from "./AdCard";
+import { Badge, LEARNING, adHealth } from "./AdCard";
+import { AdPreview } from "./AdPreview";
 import { BarChart } from "./BarChart";
 import { refreshAll } from "./usePoll";
 
@@ -72,7 +73,7 @@ export function AdDrawer({ ad, from, rangeLabel, currency, targetCpl, freqLimit,
 
         <div className="grid gap-6 p-5 md:grid-cols-[300px_1fr]">
           <div className="space-y-3">
-            <CreativePreview ad={ad} large className="rounded-2xl" />
+            <AdPreview ad={ad} />
             <div className="card space-y-2 p-4 text-[13px]">
               <p className="font-semibold">{ad.creative.headline}</p>
               <p className="whitespace-pre-wrap text-muted">{ad.creative.primaryText}</p>
